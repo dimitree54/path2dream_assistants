@@ -143,9 +143,19 @@ def assert_rclone_config_precedes_mount(
     assert min(config_indexes) < min(mount_indexes)
     assert any(remote_name in command and folder_id in command for command in commands)
     assert any(
+        command[:1] == ["config"] and "drive.file" in command and "--non-interactive" in command
+        for command in commands
+    )
+    assert any(
         command[:1] == ["mount"]
         and command[1].startswith(f"{remote_name}:")
         and str(container_path) in command
+        and "--poll-interval" in command
+        and "10m" in command
+        and "--vfs-cache-mode" in command
+        and "writes" in command
+        and "--vfs-write-back" in command
+        and "5s" in command
         for command in commands
     )
 

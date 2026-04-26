@@ -99,6 +99,9 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
 - The service must create rclone config from Google OAuth credentials before mounting.
 - Google Drive must be mounted with `rclone mount`.
+- `rclone mount` must poll Google Drive-side changes at least once per 10 minutes.
+- `rclone mount` must use VFS write cache mode `writes`, so tools can use filesystem operations such as rewriting existing files in-place, seek/truncate, random writes, and opening files for read/write.
+- Cached VFS writes must use an explicit write-back delay of `5s` before upload to Google Drive after file changes are closed/flushed.
 - `/status` must report `mounted=true` only after `rclone mount` starts successfully and the container path is verified as a mountpoint.
 - The service must request Docker runtime capabilities required for FUSE, including `/dev/fuse`, `cap_add`, and security options.
 - The service must record `MountMetadata` so mount-aware plugins can use it.

@@ -1,6 +1,7 @@
 """Public model contracts used by assistant API services."""
 
 from .command_exec_result import CommandExecResult
+from .container_managed_process import ContainerManagedProcess
 from .container_runtime_context import ContainerRuntimeContext
 from .container_spec import ContainerSpec
 from .container_startup_task import ContainerStartupTask
@@ -11,6 +12,7 @@ from .volume_mount import VolumeMount, VolumeType
 
 __all__ = [
     "CommandExecResult",
+    "ContainerManagedProcess",
     "ContainerRuntimeContext",
     "ContainerSpec",
     "ContainerStartupTask",

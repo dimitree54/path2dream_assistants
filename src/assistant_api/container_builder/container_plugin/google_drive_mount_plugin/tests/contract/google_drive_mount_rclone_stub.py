@@ -87,6 +87,9 @@ with log_path.open("a", encoding="utf-8") as log:
     log.write(json.dumps(args) + "\\n")
 if not args:
     raise SystemExit(2)
+if args[:2] == ["config", "delete"]:
+    config_marker.unlink(missing_ok=True)
+    raise SystemExit(0)
 if args[0] == "config":
     config_marker.write_text(json.dumps(args), encoding="utf-8")
     raise SystemExit(0)

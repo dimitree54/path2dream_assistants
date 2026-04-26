@@ -6,12 +6,13 @@ from typing import Any
 
 from assistant_api.container_builder._docker_runtime import (
     DEFAULT_COMMAND,
+    container_command,
     docker_ports,
     docker_volumes,
     run_container,
 )
 from assistant_api.container_builder._dockerfile import render_dockerfile
-from assistant_api.models import ContainerSpec, ImageSpec, VolumeMount
+from assistant_api.models import ContainerManagedProcess, ContainerSpec, ImageSpec, VolumeMount
 
 
 def test_default_command_keeps_minimal_container_running() -> None:
@@ -68,3 +69,24 @@ def test_run_container_passes_runtime_capabilities_to_docker_sdk() -> None:
     assert calls[0]["devices"] == ["/dev/fuse"]
     assert calls[0]["cap_add"] == ["SYS_ADMIN"]
     assert calls[0]["security_opt"] == ["apparmor:unconfined"]
+
+
+def test_container_command_composes_raw_command_with_managed_processes() -> None:
+    command = container_command(
+        ContainerSpec(
+            name="container-name",
+            image_tag="image-tag",
+            command=["opencode", "web"],
+            managed_processes=[
+                ContainerManagedProcess(
+                    name="auth-server",
+                    command=["python3", "/opt/auth.py"],
+                )
+            ],
+        )
+    )
+
+    assert command[:2] == ["/bin/sh", "-lc"]
+    assert "opencode web &" in command[2]
+    assert "python3 /opt/auth.py &" in command[2]
+    assert "wait -n" in command[2]

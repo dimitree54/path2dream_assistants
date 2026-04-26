@@ -146,4 +146,5 @@ def test_logout_unmounts_and_clears_auth_config(
     assert status["mounted"] is False
     assert fake_rclone.mount_marker.exists() is False
     assert fake_rclone.config_marker.exists() is False
-    assert any(command[:1] in (["unmount"], ["cleanup"]) for command in fake_rclone.commands())
+    assert any(command[:1] == ["unmount"] for command in fake_rclone.commands())
+    assert any(command[:2] == ["config", "delete"] for command in fake_rclone.commands())

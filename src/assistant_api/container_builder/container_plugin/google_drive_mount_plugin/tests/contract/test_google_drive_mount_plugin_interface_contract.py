@@ -95,8 +95,11 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     host_port = auth_port()
     plugin = service_class()()
 
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
 
+    assert any("rclone" in command for command in image_spec.run_commands)
+    assert any("fuse3" in command for command in image_spec.run_commands)
+    assert any("/workspace/project" in command for command in image_spec.run_commands)
     assert container_spec.ports == {host_port: host_port}
     assert container_spec.volumes == {}
     assert container_spec.command is None

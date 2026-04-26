@@ -54,12 +54,31 @@ def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
 
 def container_command(container_spec: ContainerSpec) -> list[str]:
     command = container_spec.command or DEFAULT_COMMAND
+    if container_spec.managed_processes:
+        long_running_commands = []
+        if container_spec.command is not None:
+            long_running_commands.append(container_spec.command)
+        long_running_commands.extend(process.command for process in container_spec.managed_processes)
+        command = ["/bin/sh", "-lc", _managed_process_command(long_running_commands)]
     if not container_spec.startup_tasks:
         return command
 
     shell_parts = [shlex.join(task.command) for task in container_spec.startup_tasks]
     shell_parts.append("exec " + shlex.join(command))
     return ["/bin/sh", "-lc", " && ".join(shell_parts)]
+
+
+def _managed_process_command(commands: list[list[str]]) -> str:
+    parts = []
+    for command in commands:
+        parts.append(shlex.join(command) + " &")
+        parts.append('pids="$pids $!"')
+    parts.append("wait -n")
+    parts.append("status=$?")
+    parts.append("kill $pids 2>/dev/null || true")
+    parts.append("wait 2>/dev/null || true")
+    parts.append("exit $status")
+    return "\n".join(parts)
 
 
 def ensure_named_volumes(docker_client: Any, container_spec: ContainerSpec) -> None:
