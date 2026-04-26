@@ -15,6 +15,9 @@ from assistant_api.container_builder.container_plugin import (
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
+from assistant_api.container_builder.container_plugin.google_drive_persistence_plugin import (
+    GoogleDrivePersistencePluginService,
+)
 from assistant_api.models import ContainerRuntimeContext, MountMetadata, OpenCodeRuntimeMetadata
 from google_drive_mount_contract_helpers import REQUIRED_ENV, auth_port, service_class, unused_port
 from google_drive_mount_oauth_stub import google_env
@@ -204,6 +207,25 @@ def test_google_drive_auth_runs_as_composable_managed_process(google_env: str) -
     managed_processes = getattr(container_spec, "managed_processes", None)
     assert managed_processes is not None, "Google Drive auth must be a container process"
     assert any("GOOGLE_DRIVE_AUTH_PORT" in repr(process) for process in managed_processes)
+
+
+def test_prepare_specs_registers_blocking_restore_startup_task_when_persistence_is_composed(
+    google_env: str,
+) -> None:
+    plugin = service_class()(
+        host_port=auth_port(),
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[GoogleDrivePersistencePluginService(), plugin]
+    )._prepare_specs()
+
+    assert container_spec.startup_tasks, (
+        "Google Drive mount restore must be modeled as blocking startup work when persistence is composed"
+    )
+    assert any("GOOGLE_DRIVE_AUTH_PORT" in repr(process) for process in container_spec.managed_processes)
 
 
 def test_configure_image_keeps_dockerfile_run_commands_below_line_limit(google_env: str) -> None:

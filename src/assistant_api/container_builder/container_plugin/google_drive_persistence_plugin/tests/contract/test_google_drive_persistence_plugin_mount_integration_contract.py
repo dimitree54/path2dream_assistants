@@ -78,10 +78,13 @@ def test_mount_plugin_restores_valid_persisted_auth_without_browser_login(
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[persistence_plugin, mount_plugin]
     )._prepare_specs()
+    assert container_spec.startup_tasks, (
+        "Persisted Google Drive restore must run as blocking startup work before auth serving"
+    )
     for name, value in container_spec.env.items():
         monkeypatch.setenv(name, value)
 
-    start_mount_plugin(mount_plugin, container_spec.state, fake_persistent_rclone)
+    start_mount_plugin(mount_plugin, container_spec, container_spec.state, fake_persistent_rclone)
 
     status = wait_for_status(google_mount_env, "mounted")
     assert status["authValid"] is True
@@ -115,7 +118,7 @@ def test_mount_plugin_keeps_login_logout_and_status_routes_when_persistence_is_c
     for name, value in container_spec.env.items():
         monkeypatch.setenv(name, value)
 
-    start_mount_plugin(mount_plugin, container_spec.state, fake_persistent_rclone)
+    start_mount_plugin(mount_plugin, container_spec, container_spec.state, fake_persistent_rclone)
 
     status_response = read_url(service_url(google_mount_env, "/status"))
     login_response = read_url(service_url(google_mount_env, "/login"))
@@ -154,7 +157,7 @@ def test_logout_clears_only_configured_remote_from_persisted_rclone_config(
     )._prepare_specs()
     for name, value in container_spec.env.items():
         monkeypatch.setenv(name, value)
-    start_mount_plugin(mount_plugin, container_spec.state, fake_persistent_rclone)
+    start_mount_plugin(mount_plugin, container_spec, container_spec.state, fake_persistent_rclone)
     assert wait_for_status(google_mount_env, "mounted")["authValid"] is True
 
     logout = read_url(service_url(google_mount_env, "/logout"))
@@ -196,4 +199,4 @@ def test_mount_plugin_fails_fast_when_persisted_rclone_config_path_cannot_be_use
         monkeypatch.setenv(name, value)
 
     with pytest.raises(RuntimeError, match="RCLONE_CONFIG|rclone config|persisted"):
-        start_mount_plugin(mount_plugin, container_spec.state, fake_persistent_rclone)
+        start_mount_plugin(mount_plugin, container_spec, container_spec.state, fake_persistent_rclone)

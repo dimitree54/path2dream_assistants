@@ -68,6 +68,11 @@ If OpenCode runtime state is missing and no explicit `container_path` was provid
 
 The Google Drive auth flow must run fully inside the container. The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
 
+When the service composes container startup, it must separate blocking one-shot setup from long-running background processes:
+- required one-shot setup that determines whether the container startup is valid, such as restoring a persisted Google Drive mount before the auth web server becomes available, must be registered as container startup tasks and must complete successfully before the long-running container process tree starts;
+- long-running HTTP/auth serving logic must be registered as managed background processes and must not be modeled as startup tasks that are expected to exit successfully;
+- the service must not hide required blocking mount-restore work inside the long-running auth server process.
+
 Published endpoints:
 - `GET /login`;
 - `GET /oauth/callback`;
@@ -135,6 +140,9 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - The service must fail fast instead of silently using a local directory when Google Drive is not mounted.
 - The service must not expose or depend on local host directory mounts.
 - The service must not configure OpenCode persistence.
+- Required persisted-mount restore work must fail container startup immediately when it fails; it must not allow the container to keep running with the Google Drive auth endpoint missing or dead.
+- When persisted Google Drive auth exists and mount restore is required before serving browser auth endpoints, that restore step must run as blocking startup work, not as part of the long-running auth HTTP process.
+- The long-running Google Drive auth HTTP server must start only after required blocking startup work for this plugin has completed successfully.
 
 ## Sub-services
 Не выделяются.

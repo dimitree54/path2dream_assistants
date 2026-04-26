@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from assistant_api.models import ContainerRuntimeContext
+from assistant_api.models import ContainerRuntimeContext, ContainerSpec
 
 
 _started_auth_servers: list[object] = []
@@ -83,11 +83,16 @@ def mount_service_class() -> type[Any]:
 
 def start_mount_plugin(
     plugin: object,
+    container_spec: ContainerSpec,
     state: dict[str, object],
     fake_rclone: FakePersistentRclone,
 ) -> ContainerRuntimeContext:
     from assistant_api.container_builder.container_plugin.google_drive_mount_plugin._auth_server import (
+        __file__ as auth_server_file,
         GoogleDriveMountAuthServer,
+    )
+    from assistant_api.container_builder.container_plugin.google_drive_mount_plugin.google_drive_mount_plugin_service import (
+        AUTH_SERVER_PATH,
     )
 
     runtime = ContainerRuntimeContext(
@@ -96,6 +101,13 @@ def start_mount_plugin(
         state=state,
     )
     plugin.post_start(runtime)
+    for task in container_spec.startup_tasks:
+        command = list(task.command)
+        if command[:2] == ["/bin/sh", "-lc"]:
+            command[2] = command[2].replace(AUTH_SERVER_PATH, auth_server_file)
+        result = subprocess.run(command, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(result.stdout + result.stderr)
     server = GoogleDriveMountAuthServer(
         auth_port=plugin.auth_container_port,
         host_port=plugin.host_port,

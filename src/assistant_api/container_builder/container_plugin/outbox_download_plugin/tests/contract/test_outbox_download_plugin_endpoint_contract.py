@@ -4,6 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -24,7 +25,7 @@ def _list_url(host_port: int, path: str = "/api/outbox/list") -> str:
 
 
 def _download_url(host_port: int, filename: str, path: str = "/api/outbox/download") -> str:
-    return f"http://127.0.0.1:{host_port}{path}/{filename}"
+    return f"http://127.0.0.1:{host_port}{path}/{quote(filename, safe='')}"
 
 
 def _http_get(url: str, *, timeout: float = 15) -> _HttpResponse:
@@ -58,6 +59,18 @@ class _HttpResponse:
         return json.loads(self.text)
 
 
+def _docker_build_log(error: BaseException) -> str:
+    build_log = getattr(error, "build_log", None)
+    if not build_log:
+        return "<docker build log is not available>"
+
+    lines = []
+    for entry in build_log:
+        line = entry.get("stream") or entry.get("error") or repr(entry)
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
 def _wait_for_endpoint(url: str, timeout: float = 30) -> None:
     import urllib.error
     import urllib.request
@@ -74,6 +87,15 @@ def _wait_for_endpoint(url: str, timeout: float = 30) -> None:
     raise AssertionError(
         f"endpoint {url} did not become reachable within {timeout}s: {last_error}"
     )
+
+
+def _wait_for_path_absent(path: Path, timeout: float = 5) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not path.exists():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"path still exists after {timeout}s: {path}")
 
 
 def _run_outbox_container(
@@ -104,6 +126,39 @@ def _run_outbox_container(
     _wait_for_endpoint(_list_url(host_port, list_endpoint_path))
 
     return builder
+
+
+# ---------------------------------------------------------------------------
+# Container image smoke tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.manual
+def test_container_image_builds_with_outbox_server_dependencies(
+    tmp_path: Path,
+) -> None:
+    host_port = unused_port()
+    mount_dir = tmp_path / "mount"
+    mount_dir.mkdir(parents=True, exist_ok=True)
+
+    builder = ContainerBuilderService(
+        plugins=[
+            LocalDirMountPluginService(mount_dir),
+            service_class()(host_port=host_port),
+        ],
+        container_name=(
+            f"notes-assistant-outbox-download-build-test-{os.getpid()}"
+        ),
+    )
+
+    try:
+        builder.build()
+    except Exception as error:
+        pytest.fail(
+            "outbox download plugin image must build before the endpoints can "
+            f"run in a container; got {type(error).__name__}: {error}\n\n"
+            f"{_docker_build_log(error)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +328,7 @@ def test_download_endpoint_deletes_file_after_successful_download(tmp_path: Path
         response = _http_get(_download_url(host_port, "to_delete.txt"))
 
         assert response.status == 200
-        assert not (outbox_dir / "to_delete.txt").exists()
+        _wait_for_path_absent(outbox_dir / "to_delete.txt")
     finally:
         builder.stop(remove=True)
 
@@ -565,6 +620,6 @@ def test_download_endpoint_respects_custom_path(tmp_path: Path) -> None:
 
         assert response.status == 200
         assert response.body == content
-        assert not (outbox_dir / "custom.txt").exists()
+        _wait_for_path_absent(outbox_dir / "custom.txt")
     finally:
         builder.stop(remove=True)

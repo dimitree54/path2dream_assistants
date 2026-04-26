@@ -14,6 +14,7 @@ from assistant_api.models import (
     ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
+    ContainerStartupTask,
     ImageSpec,
     MountMetadata,
     OpenCodeRuntimeMetadata,
@@ -102,6 +103,13 @@ class GoogleDriveMountPluginService:
             source_type="remote",
             remote_name=self.remote_name,
         )
+        if self._requires_blocking_restore(container):
+            container.startup_tasks.append(
+                ContainerStartupTask(
+                    name="google-drive-mount-restore",
+                    command=["/bin/sh", "-lc", _auth_server_command("--restore-persisted-mount")],
+                )
+            )
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="google-drive-mount",
@@ -129,6 +137,10 @@ class GoogleDriveMountPluginService:
         if not isinstance(metadata, OpenCodeRuntimeMetadata):
             raise ConfigurationError("GoogleDriveMountPluginService requires OpenCode runtime metadata")
         return metadata
+
+    @staticmethod
+    def _requires_blocking_restore(container: ContainerSpec) -> bool:
+        return bool(container.env.get("RCLONE_CONFIG"))
 
 
 def _install_auth_server_commands() -> list[str]:
@@ -172,7 +184,8 @@ def _install_file_commands(target_path: str, content: bytes) -> list[str]:
     return commands
 
 
-def _auth_server_command() -> str:
+def _auth_server_command(*args: str) -> str:
+    extra_args = "".join(f" {shlex.quote(arg)}" for arg in args)
     return (
         "GOOGLE_DRIVE_AUTH_PORT=$GOOGLE_DRIVE_AUTH_PORT "
         "GOOGLE_DRIVE_AUTH_HOST_PORT=$GOOGLE_DRIVE_AUTH_HOST_PORT "
@@ -183,5 +196,5 @@ def _auth_server_command() -> str:
         "GOOGLE_DRIVE_OAUTH_TOKEN_URL=$GOOGLE_DRIVE_OAUTH_TOKEN_URL "
         "GOOGLE_DRIVE_API_BASE_URL=$GOOGLE_DRIVE_API_BASE_URL "
         "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON=$GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON "
-        f"exec python3 {shlex.quote(AUTH_SERVER_PATH)}"
+        f"exec python3 {shlex.quote(AUTH_SERVER_PATH)}{extra_args}"
     )

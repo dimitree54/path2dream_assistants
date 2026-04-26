@@ -36,9 +36,9 @@ class InboxUploadPluginService:
         )
 
     def configure_image(self, image: ImageSpec) -> None:
-        image.run_commands.append("apk add --no-cache python3")
+        image.run_commands.append("apk add --no-cache python3 py3-pip")
         image.run_commands.append(
-            "python3 -m pip install fastapi uvicorn python-multipart"
+            "python3 -m pip install --break-system-packages fastapi uvicorn python-multipart"
         )
         image.run_commands.extend(_install_upload_handler_commands())
 

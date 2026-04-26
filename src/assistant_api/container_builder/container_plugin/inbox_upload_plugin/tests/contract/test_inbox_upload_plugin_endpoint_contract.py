@@ -79,6 +79,18 @@ class _HttpResponse:
         return json.loads(self.text)
 
 
+def _docker_build_log(error: BaseException) -> str:
+    build_log = getattr(error, "build_log", None)
+    if not build_log:
+        return "<docker build log is not available>"
+
+    lines = []
+    for entry in build_log:
+        line = entry.get("stream") or entry.get("error") or repr(entry)
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
 def _wait_for_endpoint(url: str, timeout: float = 30) -> None:
     import urllib.error
     import urllib.request
@@ -89,6 +101,10 @@ def _wait_for_endpoint(url: str, timeout: float = 30) -> None:
         try:
             urllib.request.urlopen(url, timeout=2)
             return
+        except urllib.error.HTTPError as exc:
+            if exc.code == 405:
+                return
+            last_error = exc
         except Exception as exc:
             last_error = exc
             time.sleep(0.5)
@@ -124,6 +140,37 @@ def _run_inbox_container(
     _wait_for_endpoint(_inbox_url(host_port, endpoint_path))
 
     return builder
+
+
+# ---------------------------------------------------------------------------
+# Container image smoke tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.manual
+def test_container_image_builds_with_inbox_server_dependencies(
+    tmp_path: Path,
+) -> None:
+    host_port = unused_port()
+    mount_dir = tmp_path / "mount"
+    mount_dir.mkdir(parents=True, exist_ok=True)
+
+    builder = ContainerBuilderService(
+        plugins=[
+            LocalDirMountPluginService(mount_dir),
+            service_class()(host_port=host_port),
+        ],
+        container_name=f"notes-assistant-inbox-upload-build-test-{os.getpid()}",
+    )
+
+    try:
+        builder.build()
+    except Exception as error:
+        pytest.fail(
+            "inbox upload plugin image must build before the endpoint can "
+            f"run in a container; got {type(error).__name__}: {error}\n\n"
+            f"{_docker_build_log(error)}"
+        )
 
 
 # ---------------------------------------------------------------------------

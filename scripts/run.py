@@ -8,6 +8,12 @@ from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin.google_drive_mount_plugin import (
     GoogleDriveMountPluginService,
 )
+from assistant_api.container_builder.container_plugin.inbox_upload_plugin import (
+    InboxUploadPluginService,
+)
+from assistant_api.container_builder.container_plugin.outbox_download_plugin import (
+    OutboxDownloadPluginService,
+)
 from assistant_api.container_builder.container_plugin.google_drive_persistence_plugin import (
     GoogleDrivePersistencePluginService,
 )
@@ -34,6 +40,8 @@ def main() -> None:
     host_port = 4321
     google_drive_auth_port = 4101
     openai_auth_port = 4323
+    inbox_port = 8090
+    outbox_port = 8091
     builder = ContainerBuilderService(
         plugins=[
             OpenCodeServerPluginService(host_port=host_port),
@@ -44,7 +52,9 @@ def main() -> None:
                 drive_folder_name="notes",
             ),
             GoogleDrivePersistencePluginService(),
-            SkillsSyncPluginService(["yid-notes-assistant"]),
+            SkillsSyncPluginService(["yid-notes-assistant", "path2dream-doppler-env"]),
+            InboxUploadPluginService(host_port=inbox_port),
+            OutboxDownloadPluginService(host_port=outbox_port),
         ]
     )
 
@@ -54,6 +64,8 @@ def main() -> None:
     print(f"url=http://127.0.0.1:{host_port}/", flush=True)
     print(f"google_drive_auth=http://127.0.0.1:{google_drive_auth_port}/login", flush=True)
     print(f"openai_auth=http://127.0.0.1:{openai_auth_port}/login", flush=True)
+    print(f"inbox_upload=http://127.0.0.1:{inbox_port}/api/inbox/upload", flush=True)
+    print(f"outbox_download=http://127.0.0.1:{outbox_port}/api/outbox/download", flush=True)
 
 
 if __name__ == "__main__":

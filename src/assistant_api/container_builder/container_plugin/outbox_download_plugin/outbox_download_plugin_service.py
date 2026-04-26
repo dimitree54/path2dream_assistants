@@ -40,9 +40,9 @@ class OutboxDownloadPluginService:
         )
 
     def configure_image(self, image: ImageSpec) -> None:
-        image.run_commands.append("apk add --no-cache python3")
+        image.run_commands.append("apk add --no-cache python3 py3-pip")
         image.run_commands.append(
-            "python3 -m pip install fastapi uvicorn"
+            "python3 -m pip install --break-system-packages fastapi uvicorn"
         )
         image.run_commands.extend(_install_outbox_handler_commands())
 

@@ -453,6 +453,35 @@ def test_configure_image_installs_python3() -> None:
     assert "python3" in run_commands
 
 
+def test_configure_image_can_install_fastapi_dependencies() -> None:
+    plugin = service_class()(host_port=unused_port())
+
+    image_spec = ImageSpec()
+    plugin.configure_image(image_spec)
+
+    dependency_commands = "\n".join(
+        command
+        for command in image_spec.run_commands
+        if "fastapi" in command
+        or "uvicorn" in command
+        or "python-multipart" in command
+    )
+    assert "fastapi" in dependency_commands
+    assert "uvicorn" in dependency_commands
+    assert "python-multipart" in dependency_commands
+
+    for index, command in enumerate(image_spec.run_commands):
+        if "python3 -m pip" not in command:
+            continue
+
+        commands_before_pip_use = "\n".join(image_spec.run_commands[: index + 1])
+        assert (
+            "py3-pip" in commands_before_pip_use
+            or "ensurepip" in commands_before_pip_use
+            or "get-pip.py" in commands_before_pip_use
+        ), "configure_image uses python3 -m pip before installing pip"
+
+
 def test_configure_image_copies_upload_handler_files_to_container() -> None:
     plugin = service_class()(host_port=unused_port())
 

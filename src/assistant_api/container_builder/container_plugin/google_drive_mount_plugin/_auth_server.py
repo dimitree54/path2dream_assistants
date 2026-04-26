@@ -6,6 +6,7 @@ import secrets
 import shlex
 import subprocess
 import sys
+import argparse
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -73,7 +74,7 @@ class GoogleDriveMountAuthServer:
         self.remote_folder_id: str | None = None
 
     def serve_forever(self, bind_host: str) -> None:
-        self._restore_persisted_mount()
+        self._load_existing_mount_state()
         self._server = ThreadingHTTPServer((bind_host, self.auth_port), google_drive_mount_handler_class())
         self._server.plugin = self  # type: ignore[attr-defined]
         self._server.serve_forever()
@@ -81,11 +82,14 @@ class GoogleDriveMountAuthServer:
     def start_in_thread(self, bind_host: str) -> None:
         import threading
 
-        self._restore_persisted_mount()
+        self._load_existing_mount_state()
         self._server = ThreadingHTTPServer((bind_host, self.auth_port), google_drive_mount_handler_class())
         self._server.plugin = self  # type: ignore[attr-defined]
         thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         thread.start()
+
+    def restore_persisted_mount(self) -> None:
+        self._restore_persisted_mount()
 
     def _login(self) -> tuple[int, str, str]:
         return self._login_page_response(mark_authenticating=True)
@@ -309,6 +313,28 @@ class GoogleDriveMountAuthServer:
         self._state = "mounted"
         self._message = "Google Drive is mounted."
 
+    def _load_existing_mount_state(self) -> None:
+        config = os.environ.get("RCLONE_CONFIG")
+        if not config:
+            return
+        config_path = Path(config)
+        if config_path.parent.exists() and not config_path.parent.is_dir():
+            raise GoogleDriveMountAuthError("persisted rclone config path parent is not a directory")
+        if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
+            return
+        result = subprocess.run(
+            ["mountpoint", "-q", str(self.container_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return
+        self._auth_valid = True
+        self._mounted = True
+        self._state = "mounted"
+        self._message = "Google Drive is mounted."
+
     def _exec_checked(self, command: list[str], message: str) -> None:
         result = subprocess.run(command, check=False, capture_output=True, text=True)
         if result.returncode != 0:
@@ -361,6 +387,9 @@ def _required_port_env(name: str) -> int:
 
 def main() -> None:
     try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--restore-persisted-mount", action="store_true")
+        args = parser.parse_args()
         server = GoogleDriveMountAuthServer(
             auth_port=_required_port_env("GOOGLE_DRIVE_AUTH_PORT"),
             host_port=_required_port_env("GOOGLE_DRIVE_AUTH_HOST_PORT"),
@@ -372,6 +401,9 @@ def main() -> None:
             drive_api_base_url=_required_env("GOOGLE_DRIVE_API_BASE_URL"),
             credentials_json=_required_env("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON"),
         )
+        if args.restore_persisted_mount:
+            server.restore_persisted_mount()
+            return
         server.serve_forever("0.0.0.0")
     except GoogleDriveMountAuthError as error:
         print(str(error), file=sys.stderr)

@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 
 CONTAINER_PATH = os.environ["OUTBOX_CONTAINER_PATH"]
 LIST_ENDPOINT_PATH = os.environ["OUTBOX_LIST_ENDPOINT_PATH"]
@@ -61,19 +62,15 @@ async def download_file(filename: str):
         )
 
 
-class _RemoveFileBackgroundTask:
-    def __init__(self, file_path: str) -> None:
-        self._file_path = file_path
-
-    def __call__(self) -> None:
-        try:
-            os.unlink(self._file_path)
-        except FileNotFoundError:
-            pass
+def _unlink_if_exists(file_path: str) -> None:
+    try:
+        os.unlink(file_path)
+    except FileNotFoundError:
+        pass
 
 
-def _remove_file_after_response(file_path: str) -> _RemoveFileBackgroundTask:
-    return _RemoveFileBackgroundTask(file_path)
+def _remove_file_after_response(file_path: str) -> BackgroundTask:
+    return BackgroundTask(_unlink_if_exists, file_path)
 
 
 if __name__ == "__main__":
