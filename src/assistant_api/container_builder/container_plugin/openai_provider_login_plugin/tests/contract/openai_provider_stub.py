@@ -166,12 +166,9 @@ def opencode_provider_stub() -> OpenCodeProviderStub:
 
 @pytest.fixture
 def openai_provider_env(
-    monkeypatch: pytest.MonkeyPatch,
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> OpenAIProviderEnv:
     auth_port = unused_port()
-    monkeypatch.setenv("OPENCODE_API_PORT", str(opencode_provider_stub.port))
-    monkeypatch.setenv("OPENAI_AUTH_PORT", str(auth_port))
     return OpenAIProviderEnv(
         opencode_api_port=opencode_provider_stub.port,
         openai_auth_port=auth_port,

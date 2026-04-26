@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from google_drive_mount_contract_helpers import GOOGLE_DRIVE_FILE_SCOPE, unused_port
+from google_drive_mount_contract_helpers import GOOGLE_DRIVE_FILE_SCOPE
 
 
 @dataclass(slots=True)
@@ -181,8 +181,6 @@ def google_env(monkeypatch: pytest.MonkeyPatch) -> str:
             }
         ),
     )
-    monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_FOLDER_NAME", folder_name)
-    monkeypatch.setenv("GOOGLE_DRIVE_AUTH_PORT", str(unused_port()))
     return folder_name
 
 

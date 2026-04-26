@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
+from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
 from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec
+from assistant_api.models import OpenCodeRuntimeMetadata
 
 
 class OpenCodeWebServerPluginService:
@@ -27,6 +29,10 @@ class OpenCodeWebServerPluginService:
             str(self.container_port),
         ]
         container.ports[self.container_port] = self.host_port
+        container.state[OPENCODE_RUNTIME_STATE_KEY] = OpenCodeRuntimeMetadata(
+            working_dir=container.working_dir,
+            api_container_port=self.container_port,
+        )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
         return None

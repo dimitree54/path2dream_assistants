@@ -17,6 +17,7 @@ tags:
 - публикует container port на host port;
 - использует рабочую директорию, уже заданную другими plugins;
 - если рабочая директория не задана, использует `/workspace`;
+- сохраняет OpenCode runtime metadata в стандартный OpenCode runtime state;
 - не включает persistence;
 - не монтирует project directory.
 
@@ -39,6 +40,12 @@ class OpenCodeWebServerPluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
+During `configure_container`, the service must finalize `ContainerSpec.working_dir` before registering the OpenCode process and must record OpenCode runtime metadata in `ContainerSpec.state` using the standard OpenCode runtime state key.
+
+The recorded metadata must contain:
+- `working_dir` — final `ContainerSpec.working_dir`, from which OpenCode is launched;
+- `api_container_port` — container-local port passed to `opencode web --port` and used by other plugins for local OpenCode API calls.
+
 Команда запуска:
 
 ```bash
@@ -48,9 +55,12 @@ opencode web --hostname 0.0.0.0 --port <container_port>
 # Requirements
 - Running OpenCode Web must be optional.
 - Exposing OpenCode Web externally is part of this service.
+- `host_port` must be configured through init-time configuration and must be used as the host/external port for OpenCode Web.
+- `container_port` must be the container-local OpenCode Web and API port.
 - The service must not configure persistence.
 - The service must not mount host directories.
 - If no working directory was set by previous plugins, the service must use `/workspace`.
+- The service must record the final working directory and API container port in standard OpenCode runtime state.
 - The service must not add auth/password logic.
 
 ## Sub-services

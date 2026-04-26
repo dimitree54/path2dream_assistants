@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from assistant_api.container_builder import ContainerBuilderService
 from openai_provider_login_contract_helpers import (
+    OpenCodeRuntimeStatePlugin,
     read_url,
     service_class,
     service_url,
@@ -22,11 +23,13 @@ def test_login_selects_headless_openai_oauth_method_and_renders_user_code(
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
     opencode_provider_stub.state.callback_connects_auth = False
-    plugin = service_class()()
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
     start_plugin(plugin, container_spec.state)
 
-    login = read_url(service_url("/login"))
+    login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
 
     assert login.status == 200
     assert "text/html" in login.headers.get("Content-Type", "")
@@ -42,13 +45,17 @@ def test_successful_headless_callback_completion_reports_authenticated(
     openai_provider_env: OpenAIProviderEnv,
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
-    plugin = service_class()()
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
     start_plugin(plugin, container_spec.state)
 
-    login = read_url(service_url("/login"))
-    complete = read_url(service_url("/login?complete=1"))
-    status = wait_for_status_state("authenticated")
+    login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
+    complete = read_url(
+        service_url("/login?complete=1", port=openai_provider_env.openai_auth_port)
+    )
+    status = wait_for_status_state("authenticated", port=openai_provider_env.openai_auth_port)
 
     assert login.status == 200
     assert complete.status == 200
@@ -61,12 +68,14 @@ def test_repeated_login_while_auth_is_pending_does_not_duplicate_authorize_calls
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
     opencode_provider_stub.state.callback_connects_auth = False
-    plugin = service_class()()
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
     start_plugin(plugin, container_spec.state)
 
-    first_login = read_url(service_url("/login"))
-    second_login = read_url(service_url("/login"))
+    first_login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
+    second_login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
 
     assert first_login.status == 200
     assert second_login.status == 200
@@ -78,12 +87,14 @@ def test_login_when_already_authenticated_does_not_restart_oauth(
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
     opencode_provider_stub.state.connected = True
-    plugin = service_class()()
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
     start_plugin(plugin, container_spec.state)
 
-    login = read_url(service_url("/login"))
-    status = status_json()
+    login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
+    status = status_json(port=openai_provider_env.openai_auth_port)
 
     assert login.status == 200
     assert status["state"] == "authenticated"
@@ -96,12 +107,14 @@ def test_authorize_failure_sets_error_without_fallback_to_other_auth_methods(
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
     opencode_provider_stub.state.authorize_failure = True
-    plugin = service_class()()
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
     start_plugin(plugin, container_spec.state)
 
-    login = read_url(service_url("/login"))
-    status = wait_for_status_state("error")
+    login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
+    status = wait_for_status_state("error", port=openai_provider_env.openai_auth_port)
 
     assert login.status >= 500
     assert status["authValid"] is False
@@ -114,13 +127,17 @@ def test_callback_failure_sets_error_without_redirect_or_api_key_fallback(
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
     opencode_provider_stub.state.callback_failure = True
-    plugin = service_class()()
-    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
     start_plugin(plugin, container_spec.state)
 
-    login = read_url(service_url("/login"))
-    complete = read_url(service_url("/login?complete=1"))
-    status = wait_for_status_state("error")
+    login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
+    complete = read_url(
+        service_url("/login?complete=1", port=openai_provider_env.openai_auth_port)
+    )
+    status = wait_for_status_state("error", port=openai_provider_env.openai_auth_port)
 
     assert login.status == 200
     assert complete.status >= 500

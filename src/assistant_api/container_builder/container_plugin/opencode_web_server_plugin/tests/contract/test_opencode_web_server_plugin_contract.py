@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 
 from assistant_api.container_builder import ContainerBuilderService
+from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
+from assistant_api.models import OpenCodeRuntimeMetadata
 
 
 def test_opencode_web_server_plugin_adds_command_and_port_without_persistence() -> None:
@@ -25,3 +27,7 @@ def test_opencode_web_server_plugin_adds_command_and_port_without_persistence() 
     assert container_spec.env == {}
     assert container_spec.volumes == {}
     assert container_spec.working_dir == PurePosixPath("/workspace")
+    runtime = container_spec.state[OPENCODE_RUNTIME_STATE_KEY]
+    assert isinstance(runtime, OpenCodeRuntimeMetadata)
+    assert runtime.working_dir == PurePosixPath("/workspace")
+    assert runtime.api_container_port == 4096

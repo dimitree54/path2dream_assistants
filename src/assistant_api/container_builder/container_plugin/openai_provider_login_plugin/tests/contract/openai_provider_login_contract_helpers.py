@@ -8,9 +8,16 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
-from assistant_api.models import ContainerRuntimeContext
+from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
+from assistant_api.models import (
+    ContainerRuntimeContext,
+    ContainerSpec,
+    ImageSpec,
+    OpenCodeRuntimeMetadata,
+)
 
 
 REQUIRED_ENV = ("OPENCODE_API_PORT", "OPENAI_AUTH_PORT")
@@ -22,6 +29,25 @@ VALID_STATUS_STATES = {"unavailable", "unauthenticated", "authenticated", "error
 class OpenAIProviderEnv:
     opencode_api_port: int
     openai_auth_port: int
+
+
+class OpenCodeRuntimeStatePlugin:
+    name = "opencode-runtime-state"
+
+    def __init__(self, api_container_port: int) -> None:
+        self.api_container_port = api_container_port
+
+    def configure_image(self, image: ImageSpec) -> None:
+        return None
+
+    def configure_container(self, container: ContainerSpec) -> None:
+        container.state[OPENCODE_RUNTIME_STATE_KEY] = OpenCodeRuntimeMetadata(
+            working_dir=PurePosixPath("/workspace"),
+            api_container_port=self.api_container_port,
+        )
+
+    def post_start(self, runtime: ContainerRuntimeContext) -> None:
+        return None
 
 
 @dataclass(slots=True)
@@ -117,12 +143,12 @@ def opencode_url(path: str, port: int | None = None) -> str:
     return f"http://127.0.0.1:{port or opencode_api_port()}{path}"
 
 
-def status_response() -> HttpResponse:
-    return read_url(service_url("/status"))
+def status_response(port: int | None = None) -> HttpResponse:
+    return read_url(service_url("/status", port=port))
 
 
-def status_json(expected_status: int = 200) -> dict[str, Any]:
-    response = status_response()
+def status_json(port: int | None = None, expected_status: int = 200) -> dict[str, Any]:
+    response = status_response(port=port)
     assert response.status == expected_status, response.text
     return response.json()
 
@@ -130,12 +156,13 @@ def status_json(expected_status: int = 200) -> dict[str, Any]:
 def wait_for_status_state(
     expected_state: str,
     *,
+    port: int | None = None,
     timeout: float = 5,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_status: dict[str, Any] | None = None
     while time.monotonic() < deadline:
-        response = status_response()
+        response = status_response(port=port)
         if response.headers.get("Content-Type", "").startswith("application/json"):
             last_status = response.json()
             if last_status.get("state") == expected_state:

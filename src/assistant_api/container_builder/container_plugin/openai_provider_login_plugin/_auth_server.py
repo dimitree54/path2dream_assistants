@@ -25,7 +25,7 @@ class OpenAIProviderAuthServer:
     def __init__(self, opencode_api_port: int, auth_port: int) -> None:
         if opencode_api_port == auth_port:
             raise OpenAIProviderLoginError(
-                "OPENCODE_API_PORT and OPENAI_AUTH_PORT must be different"
+                "OpenCode API port and OpenAI auth port must be different"
             )
         self.opencode_api_port = opencode_api_port
         self.auth_port = auth_port

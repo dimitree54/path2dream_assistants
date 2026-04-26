@@ -22,8 +22,6 @@ FORBIDDEN_SCOPES = {
 }
 REQUIRED_ENV = (
     "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON",
-    "GOOGLE_DRIVE_MOUNT_FOLDER_NAME",
-    "GOOGLE_DRIVE_AUTH_PORT",
 )
 
 
@@ -62,7 +60,7 @@ def unused_port() -> int:
 
 
 def auth_port() -> int:
-    return int(os.environ["GOOGLE_DRIVE_AUTH_PORT"])
+    return unused_port()
 
 
 def read_url(

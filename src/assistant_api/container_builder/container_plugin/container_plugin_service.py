@@ -6,6 +6,7 @@ from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSp
 
 
 MOUNT_METADATA_STATE_KEY = "mount"
+OPENCODE_RUNTIME_STATE_KEY = "opencode_runtime"
 
 
 class ContainerPluginService(Protocol):

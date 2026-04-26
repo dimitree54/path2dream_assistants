@@ -18,7 +18,7 @@ tags:
 - создаёт или переиспользует обычную видимую папку приложения в Google Drive;
 - создаёт rclone config после Google OAuth;
 - запускает `rclone mount`;
-- монтирует эту Google Drive папку в тот же container path, который использует local mount;
+- монтирует эту Google Drive папку в container path, вычисленный из OpenCode runtime state или явно переданный через init;
 - сохраняет `MountMetadata` в стандартный mount-aware state;
 - отдаёт JSON status для проверки login/mount state;
 - не запускает OpenCode;
@@ -34,7 +34,7 @@ from assistant_api.container_builder.container_plugin.google_drive_mount_plugin 
     GoogleDriveMountPluginService,
 )
 
-plugin = GoogleDriveMountPluginService()
+plugin = GoogleDriveMountPluginService(host_port=4322, drive_folder_name="notes")
 ```
 
 ## Init time
@@ -42,7 +42,10 @@ plugin = GoogleDriveMountPluginService()
 class GoogleDriveMountPluginService:
     def __init__(
         self,
-        container_path: PurePosixPath = PurePosixPath("/workspace/project"),
+        host_port: int,
+        drive_folder_name: str,
+        container_path: PurePosixPath | None = None,
+        auth_container_port: int | None = None,
         remote_name: str = "gdrive",
         mode: str = "rw",
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
@@ -54,6 +57,16 @@ class GoogleDriveMountPluginService:
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
+
+When `container_path` is not provided at init time, the service must read standard OpenCode runtime state from `ContainerSpec.state` and derive the mount target as:
+
+```python
+opencode_runtime.working_dir / drive_folder_name
+```
+
+If OpenCode runtime state is missing and no explicit `container_path` was provided, configuration must fail fast.
+
+The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
 
 Published endpoints:
 - `GET /login`;
@@ -76,12 +89,16 @@ Google OAuth Web client credentials must be provided through `GOOGLE_OAUTH_CLIEN
 The variable must contain the full Google Console OAuth client JSON with a top-level `web` object. The service must read `client_id` and `client_secret` from that JSON and fail fast if the variable is missing, is not valid JSON, does not describe a Web client, or does not contain both required fields.
 
 # Requirements
-- The service must not hardcode a default Google Drive auth port.
-- The service must require `GOOGLE_DRIVE_AUTH_PORT`.
-- `GOOGLE_DRIVE_AUTH_PORT` must be parsed as an integer TCP port and used as the Google Drive auth host port and container port.
-- The default mount target must be `/workspace/project`.
+- The service must not hardcode a default Google Drive auth host/external port.
+- The service must accept Google Drive auth host/external port through init-time configuration as `host_port`.
+- The service must not require `GOOGLE_DRIVE_AUTH_PORT` from environment variables.
+- The service must accept Google Drive folder name through init-time configuration as `drive_folder_name`.
+- The service must not require `GOOGLE_DRIVE_MOUNT_FOLDER_NAME` from environment variables.
+- If `container_path` is omitted, the service must derive mount target from standard OpenCode runtime state as `working_dir / drive_folder_name`.
+- If `container_path` is omitted and OpenCode runtime state is missing, the service must fail fast.
+- If `container_path` is provided, the service must use it as the mount target without requiring OpenCode runtime state.
 - The default rclone remote name must be `gdrive`.
-- The service must require `GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON` and `GOOGLE_DRIVE_MOUNT_FOLDER_NAME`.
+- The service must require `GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON`.
 - OAuth authorize and token endpoints must be configurable at init time and default to Google OAuth endpoints.
 - Custom OAuth endpoints must be sufficient for the full OAuth flow, so local OAuth-compatible providers can be used without live Google OAuth.
 - Google Drive API base URL must be configurable at init time and default to `https://www.googleapis.com/drive/v3`.
@@ -89,7 +106,7 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - The default Google Drive OAuth scope must be `https://www.googleapis.com/auth/drive.file`.
 - The service must not request full-drive scopes such as `https://www.googleapis.com/auth/drive`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.metadata`, or `https://www.googleapis.com/auth/drive.metadata.readonly`.
 - The service must not use `https://www.googleapis.com/auth/drive.appdata` or `https://www.googleapis.com/auth/drive.appfolder` as the mounted file storage scope because the mounted files must be visible to the user in Google Drive UI.
-- The service must create or reuse a dedicated app-owned folder in the user's `My Drive` using folder name from `GOOGLE_DRIVE_MOUNT_FOLDER_NAME`.
+- The service must create or reuse a dedicated app-owned folder in the user's `My Drive` using `drive_folder_name`.
 - The mounted rclone remote root must be restricted to this dedicated app-owned folder, not the user's whole `My Drive`.
 - The service must fail fast if the dedicated app-owned folder cannot be created, found, authorized, or mounted.
 - `/login` must return an HTML login page that lets the user authorize Google Drive in a browser.

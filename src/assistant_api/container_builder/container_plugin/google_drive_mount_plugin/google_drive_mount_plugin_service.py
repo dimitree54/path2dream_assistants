@@ -7,14 +7,25 @@ import shlex
 import threading
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import PurePosixPath
+from http.server import ThreadingHTTPServer
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from assistant_api.container_builder._errors import ConfigurationError
-from assistant_api.container_builder.container_plugin import MOUNT_METADATA_STATE_KEY
-from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec, MountMetadata
+from assistant_api.container_builder.container_plugin import (
+    MOUNT_METADATA_STATE_KEY,
+    OPENCODE_RUNTIME_STATE_KEY,
+)
+from assistant_api.models import (
+    ContainerRuntimeContext,
+    ContainerSpec,
+    ImageSpec,
+    MountMetadata,
+    OpenCodeRuntimeMetadata,
+)
+
+from ._credentials import credentials_from_env
+from ._http_handler import google_drive_mount_handler_class
 
 
 GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
@@ -24,20 +35,7 @@ RCLONE_VFS_CACHE_MODE = "writes"
 RCLONE_VFS_WRITE_BACK = "5s"
 
 
-GoogleDriveMountState = Literal[
-    "unauthenticated",
-    "authenticating",
-    "authenticated",
-    "mounting",
-    "mounted",
-    "error",
-]
-
-
-@dataclass(slots=True)
-class _OAuthCredentials:
-    client_id: str
-    client_secret: str
+GoogleDriveMountState = Literal["unauthenticated", "authenticating", "authenticated", "mounting", "mounted", "error"]
 
 
 class GoogleDriveMountPluginService:
@@ -45,22 +43,32 @@ class GoogleDriveMountPluginService:
 
     def __init__(
         self,
-        container_path: PurePosixPath = PurePosixPath("/workspace/project"),
+        host_port: int,
+        drive_folder_name: str,
+        container_path: PurePosixPath | None = None,
+        auth_container_port: int | None = None,
         remote_name: str = "gdrive",
         mode: str = "rw",
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
         oauth_token_url: str = "https://oauth2.googleapis.com/token",
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
     ) -> None:
+        self.host_port = self._validate_port("host_port", host_port)
+        self.auth_container_port = self._validate_port(
+            "auth_container_port",
+            auth_container_port if auth_container_port is not None else host_port,
+        )
+        self._explicit_container_path = container_path
         self.container_path = container_path
         self.remote_name = remote_name
         self.mode = mode
         self.oauth_authorize_url = oauth_authorize_url
         self.oauth_token_url = oauth_token_url
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
-        self.auth_port = self._required_port_env("GOOGLE_DRIVE_AUTH_PORT")
-        self.folder_name = self._required_env("GOOGLE_DRIVE_MOUNT_FOLDER_NAME")
-        self.credentials = self._credentials_from_env()
+        if not drive_folder_name:
+            raise ConfigurationError("drive_folder_name is required")
+        self.folder_name = drive_folder_name
+        self.credentials = credentials_from_env()
         self._runtime: ContainerRuntimeContext | None = None
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -73,10 +81,16 @@ class GoogleDriveMountPluginService:
 
     def configure_image(self, image: ImageSpec) -> None:
         image.run_commands.append("apk add --no-cache rclone fuse3")
-        image.run_commands.append(f"mkdir -p {shlex.quote(str(self.container_path))}")
+        if self._explicit_container_path is not None:
+            image.run_commands.append(f"mkdir -p {shlex.quote(str(self._explicit_container_path))}")
 
     def configure_container(self, container: ContainerSpec) -> None:
-        container.ports[self.auth_port] = self.auth_port
+        container_path = self._explicit_container_path
+        if container_path is None:
+            opencode_runtime = self._opencode_runtime(container.state)
+            container_path = opencode_runtime.working_dir / self.folder_name
+        self.container_path = container_path
+        container.ports[self.auth_container_port] = self.host_port
         self._append_once(container.devices, "/dev/fuse")
         self._append_once(container.cap_add, "SYS_ADMIN")
         self._append_once(container.security_opt, "apparmor:unconfined")
@@ -84,7 +98,7 @@ class GoogleDriveMountPluginService:
             host_path=None,
             host_basename=self.folder_name,
             source_key=self.remote_name,
-            container_path=self.container_path,
+            container_path=container_path,
             mode=self.mode,
             source_type="remote",
             remote_name=self.remote_name,
@@ -92,7 +106,8 @@ class GoogleDriveMountPluginService:
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
         self._runtime = runtime
-        self._server = ThreadingHTTPServer(("127.0.0.1", self.auth_port), self._handler_class())
+        self._restore_persisted_mount()
+        self._server = ThreadingHTTPServer(("127.0.0.1", self.host_port), google_drive_mount_handler_class())
         self._server.plugin = self  # type: ignore[attr-defined]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -151,7 +166,7 @@ class GoogleDriveMountPluginService:
 
     def _logout(self) -> tuple[int, str, str]:
         if self._runtime is not None:
-            self._runtime.exec(["rclone", "unmount", str(self.container_path)])
+            self._runtime.exec(["rclone", "unmount", str(self._configured_container_path())])
             self._runtime.exec(["rclone", "config", "delete", self.remote_name])
         self._token = None
         self._auth_valid = False
@@ -277,12 +292,17 @@ class GoogleDriveMountPluginService:
         )
 
     def _mount_rclone(self) -> None:
+        container_path = self._configured_container_path()
+        self._exec_checked(
+            ["/bin/sh", "-lc", f"mkdir -p {shlex.quote(str(container_path))}"],
+            "mount target creation failed",
+        )
         self._exec_checked(
             [
                 "rclone",
                 "mount",
                 f"{self.remote_name}:",
-                str(self.container_path),
+                str(container_path),
                 "--daemon",
                 "--poll-interval",
                 RCLONE_POLL_INTERVAL,
@@ -295,7 +315,27 @@ class GoogleDriveMountPluginService:
         )
 
     def _verify_mountpoint(self) -> None:
-        self._exec_checked(["mountpoint", "-q", str(self.container_path)], "mountpoint verification failed")
+        self._exec_checked(
+            ["mountpoint", "-q", str(self._configured_container_path())],
+            "mountpoint verification failed",
+        )
+
+    def _restore_persisted_mount(self) -> None:
+        config = os.environ.get("RCLONE_CONFIG")
+        if not config:
+            return
+        config_path = Path(config)
+        if config_path.parent.exists() and not config_path.parent.is_dir():
+            raise RuntimeError("persisted rclone config path parent is not a directory")
+        if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
+            return
+        self._state = "mounting"
+        self._mount_rclone()
+        self._verify_mountpoint()
+        self._auth_valid = True
+        self._mounted = True
+        self._state = "mounted"
+        self._message = "Google Drive is mounted."
 
     def _exec_checked(self, command: list[str], message: str) -> None:
         if self._runtime is None:
@@ -312,7 +352,7 @@ class GoogleDriveMountPluginService:
             mount.remote_folder_id = folder_id
 
     def _redirect_uri(self) -> str:
-        return f"http://127.0.0.1:{self.auth_port}/oauth/callback"
+        return f"http://127.0.0.1:{self.host_port}/oauth/callback"
 
     def _set_error(self, message: str) -> None:
         self._state = "error"
@@ -320,78 +360,25 @@ class GoogleDriveMountPluginService:
         self._auth_valid = False
         self._mounted = False
 
-    def _handler_class(self) -> type[BaseHTTPRequestHandler]:
-        class Handler(BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
-
-            def log_message(self, _format: str, *_args: Any) -> None:
-                return None
-
-            def do_GET(self) -> None:
-                plugin: GoogleDriveMountPluginService = self.server.plugin  # type: ignore[attr-defined]
-                parsed = urllib.parse.urlparse(self.path)
-                query = urllib.parse.parse_qs(parsed.query)
-                if parsed.path == "/login":
-                    self._send(*plugin._login())
-                    return
-                if parsed.path == "/oauth/callback":
-                    self._send(*plugin._oauth_callback(query))
-                    return
-                if parsed.path == "/logout":
-                    self._send(*plugin._logout())
-                    return
-                if parsed.path == "/status":
-                    self._send(*plugin._status())
-                    return
-                self._send(404, "text/plain; charset=utf-8", "Not found.")
-
-            def _send(self, status: int, content_type: str, body: str) -> None:
-                payload = body.encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", content_type)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-
-        return Handler
-
     @staticmethod
     def _append_once(values: list[str], value: str) -> None:
         if value not in values:
             values.append(value)
 
     @staticmethod
-    def _required_env(name: str) -> str:
-        value = os.environ.get(name)
-        if not value:
-            raise ConfigurationError(f"{name} is required")
+    def _validate_port(name: str, value: int) -> int:
+        if not isinstance(value, int) or value < 1 or value > 65535:
+            raise ConfigurationError(f"{name} must be an integer TCP port")
         return value
 
-    @classmethod
-    def _required_port_env(cls, name: str) -> int:
-        value = cls._required_env(name)
-        try:
-            port = int(value)
-        except ValueError as error:
-            raise ConfigurationError(f"{name} must be an integer TCP port") from error
-        if port < 1 or port > 65535:
-            raise ConfigurationError(f"{name} must be an integer TCP port")
-        return port
+    @staticmethod
+    def _opencode_runtime(state: dict[str, object]) -> OpenCodeRuntimeMetadata:
+        metadata = state.get(OPENCODE_RUNTIME_STATE_KEY)
+        if not isinstance(metadata, OpenCodeRuntimeMetadata):
+            raise ConfigurationError("GoogleDriveMountPluginService requires OpenCode runtime metadata")
+        return metadata
 
-    @classmethod
-    def _credentials_from_env(cls) -> _OAuthCredentials:
-        raw = cls._required_env("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON")
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise ConfigurationError("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON must be valid JSON") from error
-        web = payload.get("web") if isinstance(payload, dict) else None
-        if not isinstance(web, dict):
-            raise ConfigurationError("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON must describe a Web client")
-        client_id = web.get("client_id")
-        client_secret = web.get("client_secret")
-        if not isinstance(client_id, str) or not client_id:
-            raise ConfigurationError("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON must contain web.client_id")
-        if not isinstance(client_secret, str) or not client_secret:
-            raise ConfigurationError("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON must contain web.client_secret")
-        return _OAuthCredentials(client_id=client_id, client_secret=client_secret)
+    def _configured_container_path(self) -> PurePosixPath:
+        if self.container_path is None:
+            raise RuntimeError("Google Drive mount target was not configured.")
+        return self.container_path

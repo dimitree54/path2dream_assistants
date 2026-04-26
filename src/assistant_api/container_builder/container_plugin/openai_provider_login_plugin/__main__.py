@@ -1,4 +1,4 @@
-from .openai_provider_login_plugin_service import OpenAIProviderLoginPluginService
+from ._auth_server import main
 
 
-OpenAIProviderLoginPluginService().serve_forever()
+main()

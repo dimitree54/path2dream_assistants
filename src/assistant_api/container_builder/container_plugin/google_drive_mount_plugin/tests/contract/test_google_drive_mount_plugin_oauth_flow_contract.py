@@ -27,6 +27,9 @@ def test_login_page_uses_custom_authorize_url_and_only_drive_file_scope(
 ) -> None:
     host_port = auth_port()
     plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
@@ -61,6 +64,9 @@ def test_oauth_callback_creates_folder_configures_rclone_and_reports_mounted(
 ) -> None:
     host_port = auth_port()
     plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath("/workspace/project"),
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
@@ -99,6 +105,9 @@ def test_oauth_callback_reuses_existing_folder_without_duplicate_creation(
     oauth_drive_stub.state.existing_folder_id = "existing-folder-id"
     host_port = auth_port()
     plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath("/workspace/project"),
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
@@ -127,6 +136,9 @@ def test_logout_unmounts_and_clears_auth_config(
 ) -> None:
     host_port = auth_port()
     plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath("/workspace/project"),
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,

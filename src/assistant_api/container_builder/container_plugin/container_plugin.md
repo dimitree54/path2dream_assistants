@@ -57,6 +57,18 @@ Shared runtime-модели этого интерфейса находятся �
 - plugin, который предоставляет mount source, должен записывать туда `MountMetadata`;
 - plugin, которому нужен mount source, должен читать `MountMetadata` оттуда и fail fast, если metadata нет.
 
+Стандартный OpenCode runtime state:
+- `OPENCODE_RUNTIME_STATE_KEY = "opencode_runtime"`;
+- plugin, который запускает OpenCode, должен записывать туда `OpenCodeRuntimeMetadata`;
+- `OpenCodeRuntimeMetadata.working_dir` должен содержать final container directory, из которой запускается OpenCode;
+- `OpenCodeRuntimeMetadata.api_container_port` должен содержать container-local TCP port OpenCode server API;
+- plugin, которому нужна директория запуска OpenCode или локальный OpenCode API, должен читать эту metadata из state и fail fast, если metadata нет.
+
+Стандартное правило published ports:
+- plugin, который публикует user-facing service наружу container, должен принимать host/external port через init-time configuration;
+- host/external port не должен требоваться через environment variables и не должен вычисляться из state другого plugin;
+- container/internal port может быть выбран самим plugin, передан через init-time configuration или взят из environment variable, если это явно задокументировано конкретным plugin.
+
 # Requirements
 - Lifecycle должен быть одинаковым для всех plugin-сервисов.
 - Plugin methods должны мутировать переданную spec/context in place.
@@ -68,6 +80,8 @@ Shared runtime-модели этого интерфейса находятся �
 - Raw `ContainerSpec.command` and managed processes must not be used together silently.
 - Docker runtime capabilities requested by plugins must be explicit in `ContainerSpec`.
 - Shared state должен использоваться только для маленьких typed coordination models, а не для скрытой передачи implementation details.
+- Plugin coordination through `ContainerSpec.state` must replace duplicated caller-provided configuration when one plugin can provide the required runtime fact to another plugin.
+- User-facing host ports must be configured through plugin init-time configuration, not through caller-provided environment variables.
 
 ## Sub-services
 Не выделяются.

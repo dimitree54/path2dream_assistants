@@ -8,8 +8,14 @@ import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
-from assistant_api.container_builder.container_plugin import MOUNT_METADATA_STATE_KEY
-from assistant_api.models import MountMetadata
+from assistant_api.container_builder.container_plugin import (
+    MOUNT_METADATA_STATE_KEY,
+    OPENCODE_RUNTIME_STATE_KEY,
+)
+from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
+    OpenCodeWebServerPluginService,
+)
+from assistant_api.models import MountMetadata, OpenCodeRuntimeMetadata
 from google_drive_mount_contract_helpers import REQUIRED_ENV, auth_port, service_class, unused_port
 from google_drive_mount_oauth_stub import google_env
 
@@ -18,14 +24,20 @@ def test_public_service_import_and_init_signature_defaults() -> None:
     signature = inspect.signature(service_class())
 
     assert list(signature.parameters) == [
+        "host_port",
+        "drive_folder_name",
         "container_path",
+        "auth_container_port",
         "remote_name",
         "mode",
         "oauth_authorize_url",
         "oauth_token_url",
         "drive_api_base_url",
     ]
-    assert signature.parameters["container_path"].default == PurePosixPath("/workspace/project")
+    assert signature.parameters["host_port"].default is inspect.Parameter.empty
+    assert signature.parameters["drive_folder_name"].default is inspect.Parameter.empty
+    assert signature.parameters["container_path"].default is None
+    assert signature.parameters["auth_container_port"].default is None
     assert signature.parameters["remote_name"].default == "gdrive"
     assert signature.parameters["mode"].default == "rw"
     assert (
@@ -43,29 +55,55 @@ def test_public_service_import_and_init_signature_defaults() -> None:
 
 
 @pytest.mark.parametrize("missing_env", REQUIRED_ENV)
-def test_init_requires_google_oauth_and_folder_env(
+def test_init_requires_google_oauth_env(
     monkeypatch: pytest.MonkeyPatch,
     missing_env: str,
 ) -> None:
     for env_name in REQUIRED_ENV:
         monkeypatch.setenv(env_name, f"value-for-{env_name}")
-    monkeypatch.setenv("GOOGLE_DRIVE_AUTH_PORT", str(unused_port()))
     monkeypatch.delenv(missing_env)
 
     with pytest.raises(ConfigurationError, match=missing_env):
-        service_class()()
+        service_class()(host_port=unused_port(), drive_folder_name="Drive Folder")
 
 
-@pytest.mark.parametrize("invalid_port", ["", "not-a-port", "0", "65536"])
-def test_init_requires_valid_google_drive_auth_port(
+def test_init_does_not_require_port_or_folder_env(
     google_env: str,
     monkeypatch: pytest.MonkeyPatch,
-    invalid_port: str,
 ) -> None:
-    monkeypatch.setenv("GOOGLE_DRIVE_AUTH_PORT", invalid_port)
+    monkeypatch.delenv("GOOGLE_DRIVE_AUTH_PORT", raising=False)
+    monkeypatch.delenv("GOOGLE_DRIVE_MOUNT_FOLDER_NAME", raising=False)
 
-    with pytest.raises(ConfigurationError, match="GOOGLE_DRIVE_AUTH_PORT"):
-        service_class()()
+    plugin = service_class()(host_port=unused_port(), drive_folder_name=google_env)
+
+    assert plugin.folder_name == google_env
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_message"),
+    [
+        ({"host_port": 0}, "host_port"),
+        ({"host_port": 65536}, "host_port"),
+        ({"host_port": "not-a-port"}, "host_port"),
+        ({"auth_container_port": 0}, "auth_container_port"),
+        ({"auth_container_port": 65536}, "auth_container_port"),
+        ({"auth_container_port": "not-a-port"}, "auth_container_port"),
+    ],
+)
+def test_init_requires_valid_google_drive_auth_ports(
+    google_env: str,
+    kwargs: dict[str, object],
+    expected_message: str,
+) -> None:
+    init_kwargs = {"host_port": unused_port(), "drive_folder_name": google_env, **kwargs}
+
+    with pytest.raises(ConfigurationError, match=expected_message):
+        service_class()(**init_kwargs)
+
+
+def test_init_requires_drive_folder_name(google_env: str) -> None:
+    with pytest.raises(ConfigurationError, match="drive_folder_name"):
+        service_class()(host_port=unused_port(), drive_folder_name="")
 
 
 @pytest.mark.parametrize(
@@ -86,14 +124,18 @@ def test_init_requires_valid_google_oauth_web_credentials_json(
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON", credentials_json)
 
     with pytest.raises(ConfigurationError, match="GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON"):
-        service_class()()
+        service_class()(host_port=unused_port(), drive_folder_name=google_env)
 
 
 def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata(
     google_env: str,
 ) -> None:
     host_port = auth_port()
-    plugin = service_class()()
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
 
     image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
 
@@ -118,3 +160,30 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     assert mount.remote_folder_id is None
     assert mount.container_path == PurePosixPath("/workspace/project")
     assert mount.mode == "rw"
+
+
+def test_prepare_specs_derives_mount_path_from_opencode_runtime_state(
+    google_env: str,
+) -> None:
+    host_port = auth_port()
+    plugin = service_class()(host_port=host_port, drive_folder_name=google_env)
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeWebServerPluginService(host_port=4097), plugin]
+    )._prepare_specs()
+
+    opencode_runtime = container_spec.state[OPENCODE_RUNTIME_STATE_KEY]
+    mount = container_spec.state[MOUNT_METADATA_STATE_KEY]
+    assert isinstance(opencode_runtime, OpenCodeRuntimeMetadata)
+    assert isinstance(mount, MountMetadata)
+    assert opencode_runtime.working_dir == PurePosixPath("/workspace")
+    assert mount.container_path == PurePosixPath("/workspace") / google_env
+
+
+def test_prepare_specs_requires_opencode_runtime_state_when_container_path_is_omitted(
+    google_env: str,
+) -> None:
+    plugin = service_class()(host_port=auth_port(), drive_folder_name=google_env)
+
+    with pytest.raises(ConfigurationError, match="OpenCode runtime metadata"):
+        ContainerBuilderService(plugins=[plugin])._prepare_specs()

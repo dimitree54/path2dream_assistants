@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import PurePosixPath
 
 import pytest
 
@@ -21,7 +22,11 @@ from google_drive_mount_contract_helpers import (
 def test_manual_live_google_drive_mount_round_trip() -> None:
     require_manual_env()
     host_port = auth_port()
-    plugin = service_class()()
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name="Notes Assistant API Manual Folder",
+        container_path=PurePosixPath("/workspace/project"),
+    )
     builder = ContainerBuilderService(
         plugins=[plugin],
         container_name=f"notes-assistant-gdrive-manual-{os.getpid()}",

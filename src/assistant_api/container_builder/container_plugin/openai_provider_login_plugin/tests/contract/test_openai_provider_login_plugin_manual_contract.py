@@ -29,7 +29,7 @@ OPENCODE_TEST_MODEL = "openai/gpt-5.5"
 @pytest.mark.manual
 def test_manual_live_openai_provider_headless_login_round_trip() -> None:
     require_manual_env()
-    plugin = service_class()()
+    plugin = service_class()(host_port=openai_auth_port())
     builder = ContainerBuilderService(
         plugins=[
             OpenCodeWebServerPluginService(
@@ -82,7 +82,7 @@ def test_manual_live_openai_provider_headless_login_round_trip() -> None:
 @pytest.mark.manual
 def test_manual_fresh_container_openai_login_then_real_opencode_prompt() -> None:
     require_manual_env()
-    plugin = service_class()()
+    plugin = service_class()(host_port=openai_auth_port())
     builder = ContainerBuilderService(
         plugins=[
             OpenCodeWebServerPluginService(

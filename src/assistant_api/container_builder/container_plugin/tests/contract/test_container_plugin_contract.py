@@ -4,6 +4,7 @@ from typing import get_type_hints
 
 from assistant_api.container_builder.container_plugin import (
     MOUNT_METADATA_STATE_KEY,
+    OPENCODE_RUNTIME_STATE_KEY,
     ContainerPluginService,
 )
 from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec
@@ -14,6 +15,7 @@ def test_container_plugin_service_defines_lifecycle_contract() -> None:
     assert hasattr(ContainerPluginService, "configure_container")
     assert hasattr(ContainerPluginService, "post_start")
     assert MOUNT_METADATA_STATE_KEY == "mount"
+    assert OPENCODE_RUNTIME_STATE_KEY == "opencode_runtime"
 
 
 def test_container_plugin_lifecycle_uses_public_models() -> None:

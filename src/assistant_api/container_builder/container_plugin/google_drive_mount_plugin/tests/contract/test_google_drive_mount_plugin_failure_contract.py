@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
@@ -31,6 +33,9 @@ def test_flow_failures_report_error_and_never_fallback_to_local_mount(
         monkeypatch.setenv("FAKE_MOUNTPOINT_FAIL", "1")
     host_port = auth_port()
     plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath("/workspace/project"),
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,

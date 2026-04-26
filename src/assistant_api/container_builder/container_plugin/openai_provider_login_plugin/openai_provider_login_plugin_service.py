@@ -4,17 +4,18 @@ import base64
 from pathlib import Path
 
 from assistant_api.container_builder._errors import ConfigurationError
+from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
 from assistant_api.models import (
     ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
     ImageSpec,
+    OpenCodeRuntimeMetadata,
 )
 
 from ._auth_server import (
     OpenAIProviderAuthServer,
     OpenAIProviderLoginError,
-    required_port_env,
 )
 
 
@@ -24,25 +25,32 @@ AUTH_SERVER_PATH = "/opt/notes-assistant-api/openai_provider_auth_server.py"
 class OpenAIProviderLoginPluginService:
     name = "openai-provider-login"
 
-    def __init__(self) -> None:
-        try:
-            self.opencode_api_port = required_port_env("OPENCODE_API_PORT")
-            self.auth_port = required_port_env("OPENAI_AUTH_PORT")
-            self._auth_server = OpenAIProviderAuthServer(
-                opencode_api_port=self.opencode_api_port,
-                auth_port=self.auth_port,
-            )
-        except OpenAIProviderLoginError as error:
-            raise ConfigurationError(str(error)) from error
+    def __init__(self, host_port: int, auth_container_port: int | None = None) -> None:
+        self.host_port = self._validate_port("host_port", host_port)
+        self.auth_container_port = self._validate_port(
+            "auth_container_port",
+            auth_container_port if auth_container_port is not None else host_port,
+        )
+        self.opencode_api_port: int | None = None
+        self._auth_server: OpenAIProviderAuthServer | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
         image.run_commands.append("apk add --no-cache python3")
         image.run_commands.append(_install_auth_server_command())
 
     def configure_container(self, container: ContainerSpec) -> None:
+        opencode_runtime = self._opencode_runtime(container.state)
+        self.opencode_api_port = opencode_runtime.api_container_port
+        try:
+            self._auth_server = OpenAIProviderAuthServer(
+                opencode_api_port=self.opencode_api_port,
+                auth_port=self.auth_container_port,
+            )
+        except OpenAIProviderLoginError as error:
+            raise ConfigurationError(str(error)) from error
         container.env["OPENCODE_API_PORT"] = str(self.opencode_api_port)
-        container.env["OPENAI_AUTH_PORT"] = str(self.auth_port)
-        container.ports[self.auth_port] = self.auth_port
+        container.env["OPENAI_AUTH_PORT"] = str(self.auth_container_port)
+        container.ports[self.auth_container_port] = self.host_port
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="openai-provider-login",
@@ -53,6 +61,8 @@ class OpenAIProviderLoginPluginService:
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
         if type(runtime.docker_client) is not object:
             return None
+        if self._auth_server is None:
+            raise ConfigurationError("OpenAIProviderLoginPluginService requires OpenCode runtime metadata")
         try:
             self._auth_server.start_in_thread("127.0.0.1")
         except OpenAIProviderLoginError as error:
@@ -60,10 +70,25 @@ class OpenAIProviderLoginPluginService:
         return None
 
     def serve_forever(self) -> None:
+        if self._auth_server is None:
+            raise ConfigurationError("OpenAIProviderLoginPluginService requires OpenCode runtime metadata")
         try:
             self._auth_server.serve_forever("0.0.0.0")
         except OpenAIProviderLoginError as error:
             raise ConfigurationError(str(error)) from error
+
+    @staticmethod
+    def _validate_port(name: str, value: int) -> int:
+        if not isinstance(value, int) or value < 1 or value > 65535:
+            raise ConfigurationError(f"{name} must be an integer TCP port")
+        return value
+
+    @staticmethod
+    def _opencode_runtime(state: dict[str, object]) -> OpenCodeRuntimeMetadata:
+        metadata = state.get(OPENCODE_RUNTIME_STATE_KEY)
+        if not isinstance(metadata, OpenCodeRuntimeMetadata):
+            raise ConfigurationError("OpenAIProviderLoginPluginService requires OpenCode runtime metadata")
+        return metadata
 
 
 def _install_auth_server_command() -> str:
