@@ -60,7 +60,7 @@ def test_valid_working_dir_registers_single_startup_task_only(tmp_path: Path) ->
     assert container_spec.security_opt == []
 
 
-def test_skills_sync_does_not_mutate_image_spec(tmp_path: Path) -> None:
+def test_skills_sync_only_adds_required_image_dependencies(tmp_path: Path) -> None:
     image_spec, _container_spec = ContainerBuilderService(
         plugins=[
             WorkingDirPlugin(tmp_path),
@@ -71,4 +71,20 @@ def test_skills_sync_does_not_mutate_image_spec(tmp_path: Path) -> None:
     assert image_spec.env == {}
     assert image_spec.workdir is None
     assert image_spec.command is None
-    assert image_spec.run_commands == ["mkdir -p /workspace"]
+    assert image_spec.run_commands == [
+        "mkdir -p /workspace",
+        "apk add --no-cache git python3",
+    ]
+
+
+def test_configure_image_installs_startup_task_runtime_dependencies(tmp_path: Path) -> None:
+    image_spec, _container_spec = ContainerBuilderService(
+        plugins=[
+            WorkingDirPlugin(tmp_path),
+            service_class()(["yid-notes-assistant"]),
+        ]
+    )._prepare_specs()
+
+    run_commands = "\n".join(image_spec.run_commands)
+    assert "git" in run_commands
+    assert "python3" in run_commands

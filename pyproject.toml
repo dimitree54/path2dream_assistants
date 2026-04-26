@@ -19,6 +19,11 @@ test = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"assistant_api.container_builder.container_plugin" = ["assets/*.css"]
+"assistant_api.container_builder.container_plugin.google_drive_mount_plugin" = ["assets/*.PNG"]
+"assistant_api.container_builder.container_plugin.openai_provider_login_plugin" = ["assets/*.PNG"]
+
 [tool.pytest.ini_options]
 addopts = "-m 'not manual'"
 markers = [

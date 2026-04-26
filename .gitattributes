@@ -1,0 +1,2 @@
+src/assistant_api/container_builder/container_plugin/google_drive_mount_plugin/assets/petprojectcofounder_logo_small.PNG filter=lfs diff=lfs merge=lfs -text
+src/assistant_api/container_builder/container_plugin/openai_provider_login_plugin/assets/petprojectcofounder_logo_small.PNG filter=lfs diff=lfs merge=lfs -text

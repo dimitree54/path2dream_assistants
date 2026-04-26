@@ -20,6 +20,9 @@ from assistant_api.models import (
 )
 
 
+_started_auth_servers: list[object] = []
+
+
 REQUIRED_ENV = ("OPENCODE_API_PORT", "OPENAI_AUTH_PORT")
 PROVIDER_ID = "openai"
 VALID_STATUS_STATES = {"unavailable", "unauthenticated", "authenticated", "error"}
@@ -178,12 +181,22 @@ def extract_first_href(html: str) -> str:
 
 
 def start_plugin(plugin: object, state: dict[str, object] | None = None) -> ContainerRuntimeContext:
+    from assistant_api.container_builder.container_plugin.openai_provider_login_plugin._auth_server import (
+        OpenAIProviderAuthServer,
+    )
+
     runtime = ContainerRuntimeContext(
         docker_client=object(),
         container=FakeContainer(),
         state=state or {},
     )
     plugin.post_start(runtime)
+    server = OpenAIProviderAuthServer(
+        opencode_api_port=plugin.opencode_api_port,
+        auth_port=plugin.auth_container_port,
+    )
+    server.start_in_thread("127.0.0.1")
+    _started_auth_servers.append(server)
     return runtime
 
 

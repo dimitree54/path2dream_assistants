@@ -11,6 +11,9 @@ import pytest
 from assistant_api.models import ContainerRuntimeContext
 
 
+_started_auth_servers: list[object] = []
+
+
 @dataclass(slots=True)
 class FakeRclone:
     log_path: Path
@@ -52,12 +55,29 @@ def start_plugin(
     state: dict[str, object],
     fake_rclone: FakeRclone,
 ) -> ContainerRuntimeContext:
+    from assistant_api.container_builder.container_plugin.google_drive_mount_plugin._auth_server import (
+        GoogleDriveMountAuthServer,
+    )
+
     runtime = ContainerRuntimeContext(
         docker_client=object(),
         container=FakeContainer(fake_rclone.mount_marker),
         state=state,
     )
     plugin.post_start(runtime)
+    server = GoogleDriveMountAuthServer(
+        auth_port=plugin.auth_container_port,
+        host_port=plugin.host_port,
+        drive_folder_name=plugin.folder_name,
+        container_path=plugin.container_path,
+        remote_name=plugin.remote_name,
+        oauth_authorize_url=plugin.oauth_authorize_url,
+        oauth_token_url=plugin.oauth_token_url,
+        drive_api_base_url=plugin.drive_api_base_url,
+        credentials_json=plugin.credentials_json,
+    )
+    server.start_in_thread("127.0.0.1")
+    _started_auth_servers.append(server)
     return runtime
 
 

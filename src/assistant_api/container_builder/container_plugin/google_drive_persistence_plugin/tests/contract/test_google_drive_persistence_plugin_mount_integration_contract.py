@@ -72,7 +72,7 @@ def test_mount_plugin_restores_valid_persisted_auth_without_browser_login(
     mount_plugin = mount_service_class()(
         host_port=google_mount_env,
         drive_folder_name="Persisted Drive Folder",
-        container_path=PurePosixPath("/workspace/project"),
+        container_path=PurePosixPath(tmp_path / "project"),
         drive_api_base_url="http://127.0.0.1:1",
     )
     _image_spec, container_spec = ContainerBuilderService(
@@ -106,7 +106,7 @@ def test_mount_plugin_keeps_login_logout_and_status_routes_when_persistence_is_c
     mount_plugin = mount_service_class()(
         host_port=google_mount_env,
         drive_folder_name="Persisted Drive Folder",
-        container_path=PurePosixPath("/workspace/project"),
+        container_path=PurePosixPath(tmp_path / "project"),
         drive_api_base_url="http://127.0.0.1:1",
     )
     _image_spec, container_spec = ContainerBuilderService(
@@ -145,7 +145,7 @@ def test_logout_clears_only_configured_remote_from_persisted_rclone_config(
     mount_plugin = mount_service_class()(
         host_port=google_mount_env,
         drive_folder_name="Persisted Drive Folder",
-        container_path=PurePosixPath("/workspace/project"),
+        container_path=PurePosixPath(tmp_path / "project"),
         remote_name="gdrive",
         drive_api_base_url="http://127.0.0.1:1",
     )
@@ -186,7 +186,7 @@ def test_mount_plugin_fails_fast_when_persisted_rclone_config_path_cannot_be_use
     mount_plugin = mount_service_class()(
         host_port=google_mount_env,
         drive_folder_name="Persisted Drive Folder",
-        container_path=PurePosixPath("/workspace/project"),
+        container_path=PurePosixPath(tmp_path / "project"),
         drive_api_base_url="http://127.0.0.1:1",
     )
     _image_spec, container_spec = ContainerBuilderService(

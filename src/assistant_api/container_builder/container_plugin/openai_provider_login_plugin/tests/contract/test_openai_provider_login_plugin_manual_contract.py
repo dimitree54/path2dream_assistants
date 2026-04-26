@@ -57,11 +57,12 @@ def test_manual_live_openai_provider_headless_login_round_trip() -> None:
         )
         assert inside_status.exit_code == 0, inside_status.output
 
-        login = read_url(service_url("/login"))
+        login_url = service_url("/login")
+        login = read_url(login_url)
         assert login.status == 200
         print(
-            "\nOpen this OpenAI headless authorization page/code to authorize the manual test:\n"
-            f"{login.text}\n"
+            "\nOpen this OpenAI login page in a browser to authorize the manual test:\n"
+            f"{login_url}\n"
         )
 
         deadline = time.monotonic() + 300
@@ -103,15 +104,18 @@ def test_manual_fresh_container_openai_login_then_real_opencode_prompt() -> None
         assert provider_response.status == 200
         assert "openai" not in provider_response.json()["connected"]
 
-        login = read_url(service_url("/login"))
+        login_url = service_url("/login")
+        login = read_url(login_url)
         assert login.status == 200
         authorize_url = html.unescape(extract_first_href(login.text))
         print(
-            "\nAuthorize the fresh OpenCode container with this OpenAI link:\n"
+            "\nOpen this login page in a browser and leave it open until success:\n"
+            f"{login_url}\n\n"
+            "Direct OpenAI authorization link from the page:\n"
             f"{authorize_url}\n\n"
-            "Login page shown by the auth service:\n"
+            "Login page HTML returned by the auth service:\n"
             f"{login.text}\n\n"
-            "After completing browser auth, leave this test running; it will poll /status "
+            "After completing browser auth, leave this test running; the page and test will poll /status "
             "and then run a real OpenCode prompt.\n"
         )
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from assistant_api.container_builder.container_plugin import ContainerPluginService
@@ -10,11 +13,55 @@ from assistant_api.models import (
     RunningContainer,
 )
 
+from ._errors import ConfigurationError
 from ._docker_runtime import build_image, ensure_named_volumes, run_container
 
 
 DEFAULT_IMAGE_TAG = "notes-assistant-opencode:latest"
 DEFAULT_CONTAINER_NAME = "notes-assistant-opencode"
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _PluginHook:
+    plugin_index: int
+    plugin_name: str
+    stage: str
+
+
+class _PluginLifecycle:
+    def __init__(self) -> None:
+        self.started: list[_PluginHook] = []
+        self.finished: list[_PluginHook] = []
+
+    def run(
+        self,
+        plugin_index: int,
+        plugin: ContainerPluginService,
+        stage: str,
+        hook: Callable[[], None],
+    ) -> None:
+        plugin_hook = _PluginHook(plugin_index, plugin.name, stage)
+        LOGGER.info("Starting plugin hook: plugin=%s stage=%s", plugin.name, stage)
+        self.started.append(plugin_hook)
+        try:
+            hook()
+        except ConfigurationError:
+            raise
+        except Exception as error:
+            raise RuntimeError(
+                f"Plugin hook failed: plugin={plugin.name} stage={stage}"
+            ) from error
+        self.finished.append(plugin_hook)
+
+    def validate_finished(self) -> None:
+        if self.started == self.finished:
+            return
+        missing = [hook for hook in self.started if hook not in self.finished]
+        details = ", ".join(
+            f"plugin={hook.plugin_name} stage={hook.stage}" for hook in missing
+        )
+        raise RuntimeError(f"Plugin hooks did not finish successfully: {details}")
 
 
 class ContainerBuilderService:
@@ -28,15 +75,23 @@ class ContainerBuilderService:
         self._docker_client: Any | None = None
 
     def build(self) -> None:
-        image_spec, _container_spec = self._prepare_specs()
+        lifecycle = _PluginLifecycle()
+        image_spec, _container_spec = self._prepare_specs(lifecycle)
+        lifecycle.validate_finished()
         build_image(self._client(), image_spec, DEFAULT_IMAGE_TAG)
 
     def build_and_run(self) -> RunningContainer:
-        self.build()
-        return self._run_started_container()
+        lifecycle = _PluginLifecycle()
+        image_spec, container_spec = self._prepare_specs(lifecycle)
+        lifecycle.validate_finished()
+        build_image(self._client(), image_spec, DEFAULT_IMAGE_TAG)
+        return self._run_started_container(container_spec, lifecycle)
 
-    def _run_started_container(self) -> RunningContainer:
-        _image_spec, container_spec = self._prepare_specs()
+    def _run_started_container(
+        self,
+        container_spec: ContainerSpec,
+        lifecycle: _PluginLifecycle,
+    ) -> RunningContainer:
         docker_client = self._client()
         self._replace_container_if_needed(docker_client, container_spec.name)
         ensure_named_volumes(docker_client, container_spec)
@@ -47,8 +102,14 @@ class ContainerBuilderService:
             container=container,
             state=container_spec.state,
         )
-        for plugin in self.plugins:
-            plugin.post_start(runtime)
+        for index, plugin in enumerate(self.plugins):
+            lifecycle.run(
+                index,
+                plugin,
+                "post_start",
+                lambda plugin=plugin: plugin.post_start(runtime),
+            )
+        lifecycle.validate_finished()
 
         return RunningContainer(container=container, container_spec=container_spec)
 
@@ -59,17 +120,33 @@ class ContainerBuilderService:
         if remove:
             container.remove()
 
-    def _prepare_specs(self) -> tuple[ImageSpec, ContainerSpec]:
+    def _prepare_specs(
+        self,
+        lifecycle: _PluginLifecycle | None = None,
+    ) -> tuple[ImageSpec, ContainerSpec]:
+        if lifecycle is None:
+            lifecycle = _PluginLifecycle()
         image_spec = ImageSpec(run_commands=["mkdir -p /workspace"])
         container_spec = ContainerSpec(
             name=self.container_name,
             image_tag=DEFAULT_IMAGE_TAG,
         )
 
-        for plugin in self.plugins:
-            plugin.configure_image(image_spec)
-        for plugin in self.plugins:
-            plugin.configure_container(container_spec)
+        for index, plugin in enumerate(self.plugins):
+            lifecycle.run(
+                index,
+                plugin,
+                "configure_image",
+                lambda plugin=plugin: plugin.configure_image(image_spec),
+            )
+        for index, plugin in enumerate(self.plugins):
+            lifecycle.run(
+                index,
+                plugin,
+                "configure_container",
+                lambda plugin=plugin: plugin.configure_container(container_spec),
+            )
+        lifecycle.validate_finished()
 
         return image_spec, container_spec
 
@@ -85,4 +162,5 @@ class ContainerBuilderService:
             container = docker_client.containers.get(container_name)
         except Exception:
             return
+        LOGGER.info("Removing existing container before start: name=%s", container_name)
         container.remove(force=True)

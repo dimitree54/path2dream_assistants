@@ -40,7 +40,7 @@ class SkillsSyncPluginService:
         self.repo_ref = repo_ref
 
     def configure_image(self, image: ImageSpec) -> None:
-        return None
+        image.run_commands.append("apk add --no-cache git python3")
 
     def configure_container(self, container: ContainerSpec) -> None:
         if container.working_dir is None:

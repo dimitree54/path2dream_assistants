@@ -10,6 +10,7 @@ tags:
 
 То есть он:
 - применяет plugin lifecycle в заданном пользователем порядке;
+- логирует выполнение plugin lifecycle так, чтобы было видно, какой plugin и какой lifecycle stage запускается сейчас;
 - строит Docker image динамически;
 - запускает container через Docker SDK;
 - подготавливает startup tasks и long-running processes, если их зарегистрировали plugins;
@@ -65,6 +66,7 @@ class ContainerBuilderService:
 - Minimal builder with an empty plugins list must be valid and must start a long-running inert container.
 - `container_name` must define the Docker container name used for start, replacement and stop operations.
 - Plugins must be applied in caller-provided order.
+- Plugin lifecycle execution must be logged with the current plugin name and lifecycle stage before each plugin hook starts.
 - Invalid plugin combinations must fail fast with an explicit error.
 - `build_and_run()` must build the Docker image before starting the container.
 - Startup tasks registered by plugins must run before managed long-running processes.
@@ -72,7 +74,9 @@ class ContainerBuilderService:
 - A raw `ContainerSpec.command` and managed long-running processes must not conflict silently.
 - Docker runtime capabilities requested by plugins, including devices, `cap_add`, and security options, must be passed to Docker SDK when the container starts.
 - Post-start hooks must run after Docker reports the container as started.
-- An existing container with the configured `container_name` may be force removed before starting the new one.
+- `build_and_run()` must validate that all plugin hooks finished successfully before returning `RunningContainer`.
+- Any plugin hook failure must fail fast with an explicit error and must prevent `build_and_run()` from returning a successful result.
+- An existing container with the configured `container_name` may be force removed before starting the new one, and this replacement must be logged with the container name.
 
 ## Sub-services
 [[container_plugin/container_plugin.md|ContainerPluginService]]

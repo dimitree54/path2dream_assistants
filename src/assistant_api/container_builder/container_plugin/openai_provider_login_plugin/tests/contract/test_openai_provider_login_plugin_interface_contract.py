@@ -8,7 +8,7 @@ import pytest
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
-from assistant_api.models import ContainerSpec, OpenCodeRuntimeMetadata
+from assistant_api.models import ContainerRuntimeContext, ContainerSpec, OpenCodeRuntimeMetadata
 from openai_provider_login_contract_helpers import (
     OpenCodeRuntimeStatePlugin,
     service_class,
@@ -143,3 +143,67 @@ def test_openai_auth_runs_as_composable_managed_process(
     managed_processes = getattr(container_spec, "managed_processes", None)
     assert managed_processes is not None, "OpenAI auth must not overwrite OpenCode process"
     assert any("OPENAI_AUTH_PORT" in repr(process) for process in managed_processes)
+
+
+def test_post_start_does_not_start_host_side_auth_server(
+    openai_provider_env: OpenAIProviderEnv,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from assistant_api.container_builder.container_plugin.openai_provider_login_plugin._auth_server import (
+        OpenAIProviderAuthServer,
+    )
+
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+
+    def fail_host_start(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("OpenAI auth must not start host-side server")
+
+    monkeypatch.setattr(OpenAIProviderAuthServer, "start_in_thread", fail_host_start)
+
+    plugin.post_start(
+        ContainerRuntimeContext(
+            docker_client=object(),
+            container=object(),
+            state=container_spec.state,
+        )
+    )
+
+
+def test_configure_image_installs_login_page_support_files(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+
+    image_spec, _container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+    install_commands = "\n".join(image_spec.run_commands)
+
+    assert "openai_provider_auth_server.py" in install_commands
+    assert "_login_page.py" in install_commands
+    assert "assets/petprojectcofounder_logo_small.PNG" in install_commands
+    assert "assets/petprojectcofounder_login_page.css" in install_commands
+
+
+def test_configure_image_keeps_dockerfile_run_commands_below_line_limit(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+
+    image_spec, _container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+
+    assert max(len(command) for command in image_spec.run_commands) < 65_535

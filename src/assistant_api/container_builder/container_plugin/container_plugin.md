@@ -52,6 +52,12 @@ Shared runtime-модели этого интерфейса находятся �
 - managed process — long-running process, которым управляет container entrypoint;
 - Docker runtime capabilities — минимальные Docker options, нужные plugin для запуска container, включая devices, `cap_add` и security options.
 
+Стандартное правило host/container responsibility:
+- host-side plugin logic should stay minimal and limited to preparing specs, validating configuration, and explicit short post-start checks;
+- most runtime behavior must happen inside the container;
+- long-running behavior must be modeled as container startup tasks, managed processes, container commands, or container-side services;
+- plugins should not rely on host-side background threads, host-side HTTP listeners, or host-side long-running processes to keep container-published functionality available.
+
 Стандартный mount-aware state:
 - `MOUNT_METADATA_STATE_KEY = "mount"`;
 - plugin, который предоставляет mount source, должен записывать туда `MountMetadata`;
@@ -79,6 +85,7 @@ Shared runtime-модели этого интерфейса находятся �
 - Managed processes from several plugins must be composed without overwriting each other.
 - Raw `ContainerSpec.command` and managed processes must not be used together silently.
 - Docker runtime capabilities requested by plugins must be explicit in `ContainerSpec`.
+- Host-side plugin logic must stay minimal; most runtime behavior, especially long-running behavior, must run inside the container.
 - Shared state должен использоваться только для маленьких typed coordination models, а не для скрытой передачи implementation details.
 - Plugin coordination through `ContainerSpec.state` must replace duplicated caller-provided configuration when one plugin can provide the required runtime fact to another plugin.
 - User-facing host ports must be configured through plugin init-time configuration, not through caller-provided environment variables.

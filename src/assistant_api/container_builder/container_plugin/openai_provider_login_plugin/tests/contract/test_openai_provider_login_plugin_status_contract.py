@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
-from assistant_api.container_builder._errors import ConfigurationError
+from assistant_api.container_builder.container_plugin.openai_provider_login_plugin._auth_server import (
+    OpenAIProviderLoginError,
+)
 from openai_provider_login_contract_helpers import (
     OpenCodeRuntimeStatePlugin,
     VALID_STATUS_STATES,
@@ -30,7 +32,7 @@ def test_startup_fails_when_opencode_server_is_unavailable(
         plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
     )._prepare_specs()
 
-    with pytest.raises(ConfigurationError, match="OpenCode"):
+    with pytest.raises(OpenAIProviderLoginError, match="OpenCode"):
         start_plugin(plugin, container_spec.state)
 
 
@@ -44,7 +46,7 @@ def test_startup_fails_when_openai_provider_is_missing(
         plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
     )._prepare_specs()
 
-    with pytest.raises(ConfigurationError, match="openai"):
+    with pytest.raises(OpenAIProviderLoginError, match="openai"):
         start_plugin(plugin, container_spec.state)
 
 
@@ -58,7 +60,7 @@ def test_startup_fails_when_headless_openai_oauth_is_missing(
         plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
     )._prepare_specs()
 
-    with pytest.raises(ConfigurationError, match="headless"):
+    with pytest.raises(OpenAIProviderLoginError, match="headless"):
         start_plugin(plugin, container_spec.state)
 
 

@@ -15,7 +15,7 @@ from assistant_api.container_builder.container_plugin import (
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
-from assistant_api.models import MountMetadata, OpenCodeRuntimeMetadata
+from assistant_api.models import ContainerRuntimeContext, MountMetadata, OpenCodeRuntimeMetadata
 from google_drive_mount_contract_helpers import REQUIRED_ENV, auth_port, service_class, unused_port
 from google_drive_mount_oauth_stub import google_env
 
@@ -138,14 +138,17 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     )
 
     image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    install_commands = "\n".join(image_spec.run_commands)
 
     assert any("rclone" in command for command in image_spec.run_commands)
     assert any("fuse3" in command for command in image_spec.run_commands)
     assert any("/workspace/project" in command for command in image_spec.run_commands)
+    assert "assets/petprojectcofounder_login_page.css" in install_commands
     assert container_spec.ports == {host_port: host_port}
     assert container_spec.volumes == {}
     assert container_spec.command is None
     assert container_spec.working_dir is None
+    assert any("GOOGLE_DRIVE_AUTH_PORT" in repr(process) for process in container_spec.managed_processes)
     assert not {"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"} & set(container_spec.env)
     assert "/dev/fuse" in container_spec.devices
     assert "SYS_ADMIN" in container_spec.cap_add
@@ -187,3 +190,56 @@ def test_prepare_specs_requires_opencode_runtime_state_when_container_path_is_om
 
     with pytest.raises(ConfigurationError, match="OpenCode runtime metadata"):
         ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+
+def test_google_drive_auth_runs_as_composable_managed_process(google_env: str) -> None:
+    plugin = service_class()(
+        host_port=auth_port(),
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    managed_processes = getattr(container_spec, "managed_processes", None)
+    assert managed_processes is not None, "Google Drive auth must be a container process"
+    assert any("GOOGLE_DRIVE_AUTH_PORT" in repr(process) for process in managed_processes)
+
+
+def test_configure_image_keeps_dockerfile_run_commands_below_line_limit(google_env: str) -> None:
+    plugin = service_class()(
+        host_port=auth_port(),
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
+
+    image_spec, _container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    assert max(len(command) for command in image_spec.run_commands) < 65_535
+
+
+def test_post_start_does_not_start_host_side_auth_server(
+    google_env: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import assistant_api.container_builder.container_plugin.google_drive_mount_plugin.google_drive_mount_plugin_service as service_module
+
+    plugin = service_class()(
+        host_port=auth_port(),
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    def fail_host_start(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Google Drive auth must not start host-side server")
+
+    monkeypatch.setattr(service_module, "ThreadingHTTPServer", fail_host_start, raising=False)
+
+    plugin.post_start(
+        ContainerRuntimeContext(
+            docker_client=object(),
+            container=object(),
+            state=container_spec.state,
+        )
+    )

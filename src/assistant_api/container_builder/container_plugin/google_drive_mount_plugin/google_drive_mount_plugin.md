@@ -12,9 +12,9 @@ tags:
 Единая ответственность этого сервиса — авторизовать Google Drive с минимальным доступом к видимой app-owned папке и смонтировать эту папку внутрь container через `rclone mount`.
 
 То есть он:
-- запускает отдельный Google Drive auth web server;
-- публикует его наружу на отдельный host port;
-- показывает browser login page;
+- запускает отдельный Google Drive auth web server внутри container;
+- публикует container-side auth web server наружу на отдельный host port;
+- показывает production-ready browser login page с брендингом приложения;
 - создаёт или переиспользует обычную видимую папку приложения в Google Drive;
 - создаёт rclone config после Google OAuth;
 - запускает `rclone mount`;
@@ -66,7 +66,7 @@ opencode_runtime.working_dir / drive_folder_name
 
 If OpenCode runtime state is missing and no explicit `container_path` was provided, configuration must fail fast.
 
-The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
+The Google Drive auth flow must run fully inside the container. The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
 
 Published endpoints:
 - `GET /login`;
@@ -91,6 +91,9 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 # Requirements
 - The service must not hardcode a default Google Drive auth host/external port.
 - The service must accept Google Drive auth host/external port through init-time configuration as `host_port`.
+- The service must run the Google Drive auth web server inside the container and expose it only through Docker port publishing.
+- The service must not start host-side auth servers, host-side HTTP listeners, host-side background threads, or host-side auth flow processes.
+- The service must not require the launcher Python process to stay alive after `build_and_run()` for published auth endpoints to remain available.
 - The service must not require `GOOGLE_DRIVE_AUTH_PORT` from environment variables.
 - The service must accept Google Drive folder name through init-time configuration as `drive_folder_name`.
 - The service must not require `GOOGLE_DRIVE_MOUNT_FOLDER_NAME` from environment variables.
@@ -109,9 +112,15 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - The service must create or reuse a dedicated app-owned folder in the user's `My Drive` using `drive_folder_name`.
 - The mounted rclone remote root must be restricted to this dedicated app-owned folder, not the user's whole `My Drive`.
 - The service must fail fast if the dedicated app-owned folder cannot be created, found, authorized, or mounted.
-- `/login` must return an HTML login page that lets the user authorize Google Drive in a browser.
+- `/login` must return a production-ready HTML login page that lets the user authorize Google Drive in a browser.
+- When Google Drive is already mounted, `/login` must return the mounted success page instead of restarting OAuth.
+- `/login` must not be a plain text page or a bare authorization link; it must provide a proper title, polished visual layout, clear Google Drive authorization copy, and a primary call-to-action.
+- `/login` must use the repository asset `assets/petprojectcofounder_logo_small.PNG` for Pet Project Cofounder branding, and this asset must be tracked through Git LFS.
+- `/login` must use the shared repository style asset `../assets/petprojectcofounder_login_page.css`; this CSS is the single source of truth for both Google Drive and OpenAI provider login page styling.
 - `GET /oauth/callback` must complete the OAuth redirect flow.
-- `/logout` must stop the active Google Drive mount, remove stored Google Drive auth and rclone config for this container state, and return the service to unauthenticated state.
+- After a successful `GET /oauth/callback`, the service must return a production-ready Pet Project Cofounder branded HTML success page using the shared repository style asset. The page must explain that Google Drive was mounted successfully and that the user can proceed to using the Assistant.
+- The mounted success page must provide a visible logout button that calls `/logout`.
+- `/logout` must stop the active Google Drive mount, remove stored Google Drive auth and rclone config for this container state, return the service to unauthenticated state, and render the production-ready Google Drive login page instead of plain text.
 - `/status` must return JSON with at least `authValid`, `mounted`, `state`, and `message`.
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
 - The service must create rclone config from Google OAuth credentials before mounting.

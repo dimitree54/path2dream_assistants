@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-import json
+import base64
 import os
-import secrets
 import shlex
-import threading
-import urllib.parse
-import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
 
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin import (
@@ -17,6 +11,7 @@ from assistant_api.container_builder.container_plugin import (
     OPENCODE_RUNTIME_STATE_KEY,
 )
 from assistant_api.models import (
+    ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
     ImageSpec,
@@ -25,17 +20,15 @@ from assistant_api.models import (
 )
 
 from ._credentials import credentials_from_env
-from ._http_handler import google_drive_mount_handler_class
+from ._login_page import LOGO_ASSET_NAME, SHARED_STYLE_ASSET_NAME
 
 
-GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
-RCLONE_DRIVE_FILE_SCOPE = "drive.file"
-RCLONE_POLL_INTERVAL = "10m"
-RCLONE_VFS_CACHE_MODE = "writes"
-RCLONE_VFS_WRITE_BACK = "5s"
-
-
-GoogleDriveMountState = Literal["unauthenticated", "authenticating", "authenticated", "mounting", "mounted", "error"]
+AUTH_SERVER_DIR = "/opt/notes-assistant-api/google_drive_mount_plugin"
+AUTH_SERVER_PATH = f"{AUTH_SERVER_DIR}/google_drive_mount_auth_server.py"
+HTTP_HANDLER_PATH = f"{AUTH_SERVER_DIR}/_http_handler.py"
+LOGIN_PAGE_PATH = f"{AUTH_SERVER_DIR}/_login_page.py"
+LOGO_ASSET_PATH = f"{AUTH_SERVER_DIR}/assets/{LOGO_ASSET_NAME}"
+SHARED_STYLE_ASSET_PATH = f"{AUTH_SERVER_DIR}/assets/{SHARED_STYLE_ASSET_NAME}"
 
 
 class GoogleDriveMountPluginService:
@@ -68,19 +61,12 @@ class GoogleDriveMountPluginService:
         if not drive_folder_name:
             raise ConfigurationError("drive_folder_name is required")
         self.folder_name = drive_folder_name
-        self.credentials = credentials_from_env()
-        self._runtime: ContainerRuntimeContext | None = None
-        self._server: ThreadingHTTPServer | None = None
-        self._thread: threading.Thread | None = None
-        self._state: GoogleDriveMountState = "unauthenticated"
-        self._message = "Google Drive is not authenticated."
-        self._auth_valid = False
-        self._mounted = False
-        self._oauth_state: str | None = None
-        self._token: dict[str, Any] | None = None
+        credentials_from_env()
+        self.credentials_json = os.environ["GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON"]
 
     def configure_image(self, image: ImageSpec) -> None:
-        image.run_commands.append("apk add --no-cache rclone fuse3")
+        image.run_commands.append("apk add --no-cache rclone fuse3 python3")
+        image.run_commands.extend(_install_auth_server_commands())
         if self._explicit_container_path is not None:
             image.run_commands.append(f"mkdir -p {shlex.quote(str(self._explicit_container_path))}")
 
@@ -91,6 +77,19 @@ class GoogleDriveMountPluginService:
             container_path = opencode_runtime.working_dir / self.folder_name
         self.container_path = container_path
         container.ports[self.auth_container_port] = self.host_port
+        container.env.update(
+            {
+                "GOOGLE_DRIVE_AUTH_PORT": str(self.auth_container_port),
+                "GOOGLE_DRIVE_AUTH_HOST_PORT": str(self.host_port),
+                "GOOGLE_DRIVE_MOUNT_FOLDER_NAME": self.folder_name,
+                "GOOGLE_DRIVE_MOUNT_CONTAINER_PATH": str(container_path),
+                "GOOGLE_DRIVE_REMOTE_NAME": self.remote_name,
+                "GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL": self.oauth_authorize_url,
+                "GOOGLE_DRIVE_OAUTH_TOKEN_URL": self.oauth_token_url,
+                "GOOGLE_DRIVE_API_BASE_URL": self.drive_api_base_url,
+                "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON": self.credentials_json,
+            }
+        )
         self._append_once(container.devices, "/dev/fuse")
         self._append_once(container.cap_add, "SYS_ADMIN")
         self._append_once(container.security_opt, "apparmor:unconfined")
@@ -103,262 +102,15 @@ class GoogleDriveMountPluginService:
             source_type="remote",
             remote_name=self.remote_name,
         )
+        container.managed_processes.append(
+            ContainerManagedProcess(
+                name="google-drive-mount",
+                command=["/bin/sh", "-lc", _auth_server_command()],
+            )
+        )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        self._runtime = runtime
-        self._restore_persisted_mount()
-        self._server = ThreadingHTTPServer(("127.0.0.1", self.host_port), google_drive_mount_handler_class())
-        self._server.plugin = self  # type: ignore[attr-defined]
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self._thread.start()
-
-    def _login(self) -> tuple[int, str, str]:
-        self._state = "authenticating"
-        self._message = "Waiting for Google Drive authorization."
-        self._oauth_state = secrets.token_urlsafe(24)
-        query = urllib.parse.urlencode(
-            {
-                "client_id": self.credentials.client_id,
-                "redirect_uri": self._redirect_uri(),
-                "response_type": "code",
-                "scope": GOOGLE_DRIVE_FILE_SCOPE,
-                "access_type": "offline",
-                "prompt": "consent",
-                "state": self._oauth_state,
-            }
-        )
-        authorize_url = f"{self.oauth_authorize_url}?{query}"
-        body = (
-            "<!doctype html><html><body>"
-            f'<a href="{authorize_url}">Authorize Google Drive</a>'
-            "</body></html>"
-        )
-        return 200, "text/html; charset=utf-8", body
-
-    def _oauth_callback(self, query: dict[str, list[str]]) -> tuple[int, str, str]:
-        if query.get("error"):
-            self._set_error(query["error"][0])
-            return 400, "text/plain; charset=utf-8", self._message
-        if query.get("state", [None])[0] != self._oauth_state:
-            self._set_error("OAuth state mismatch.")
-            return 400, "text/plain; charset=utf-8", self._message
-        code = query.get("code", [None])[0]
-        if not code:
-            self._set_error("OAuth callback did not include a code.")
-            return 400, "text/plain; charset=utf-8", self._message
-        try:
-            self._token = self._exchange_code(code)
-            self._auth_valid = True
-            self._state = "authenticated"
-            folder_id = self._find_or_create_folder(self._token["access_token"])
-            self._record_folder_id(folder_id)
-            self._state = "mounting"
-            self._configure_rclone(folder_id)
-            self._mount_rclone()
-            self._verify_mountpoint()
-        except Exception as error:
-            self._set_error(str(error))
-            return 500, "text/plain; charset=utf-8", self._message
-        self._state = "mounted"
-        self._mounted = True
-        self._message = "Google Drive is mounted."
-        return 200, "text/plain; charset=utf-8", self._message
-
-    def _logout(self) -> tuple[int, str, str]:
-        if self._runtime is not None:
-            self._runtime.exec(["rclone", "unmount", str(self._configured_container_path())])
-            self._runtime.exec(["rclone", "config", "delete", self.remote_name])
-        self._token = None
-        self._auth_valid = False
-        self._mounted = False
-        self._state = "unauthenticated"
-        self._message = "Google Drive is not authenticated."
-        self._record_folder_id(None)
-        return 200, "text/plain; charset=utf-8", "Logged out."
-
-    def _status(self) -> tuple[int, str, str]:
-        return (
-            200,
-            "application/json",
-            json.dumps(
-                {
-                    "authValid": self._auth_valid,
-                    "mounted": self._mounted,
-                    "state": self._state,
-                    "message": self._message,
-                }
-            ),
-        )
-
-    def _exchange_code(self, code: str) -> dict[str, Any]:
-        data = urllib.parse.urlencode(
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": self._redirect_uri(),
-                "client_id": self.credentials.client_id,
-                "client_secret": self.credentials.client_secret,
-            }
-        ).encode("utf-8")
-        request = urllib.request.Request(
-            self.oauth_token_url,
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        payload = self._json_request(request)
-        if not isinstance(payload.get("access_token"), str):
-            raise RuntimeError("OAuth token response did not include access_token.")
-        return payload
-
-    def _find_or_create_folder(self, access_token: str) -> str:
-        query = urllib.parse.urlencode(
-            {
-                "q": " and ".join(
-                    [
-                        f"name = '{self.folder_name}'",
-                        "mimeType = 'application/vnd.google-apps.folder'",
-                        "trashed = false",
-                    ]
-                ),
-                "fields": "files(id,name,mimeType)",
-                "spaces": "drive",
-            }
-        )
-        payload = self._drive_request(f"{self.drive_api_base_url}/files?{query}", access_token)
-        files = payload.get("files")
-        if not isinstance(files, list):
-            raise RuntimeError("Google Drive folder search response did not include files.")
-        if files:
-            folder_id = files[0].get("id")
-            if isinstance(folder_id, str) and folder_id:
-                return folder_id
-            raise RuntimeError("Google Drive folder search returned a folder without id.")
-        create_payload = {
-            "name": self.folder_name,
-            "mimeType": "application/vnd.google-apps.folder",
-        }
-        created = self._drive_request(
-            f"{self.drive_api_base_url}/files",
-            access_token,
-            data=json.dumps(create_payload).encode("utf-8"),
-        )
-        folder_id = created.get("id")
-        if not isinstance(folder_id, str) or not folder_id:
-            raise RuntimeError("Google Drive folder creation response did not include id.")
-        return folder_id
-
-    def _drive_request(
-        self,
-        url: str,
-        access_token: str,
-        data: bytes | None = None,
-    ) -> dict[str, Any]:
-        headers = {"Authorization": f"Bearer {access_token}"}
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        return self._json_request(urllib.request.Request(url, data=data, headers=headers))
-
-    def _json_request(self, request: urllib.request.Request) -> dict[str, Any]:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            if response.status < 200 or response.status >= 300:
-                raise RuntimeError(f"HTTP request failed with status {response.status}.")
-            payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise RuntimeError("HTTP JSON response was not an object.")
-        return payload
-
-    def _configure_rclone(self, folder_id: str) -> None:
-        token_json = json.dumps(self._token)
-        self._exec_checked(
-            [
-                "rclone",
-                "config",
-                "create",
-                self.remote_name,
-                "drive",
-                "client_id",
-                self.credentials.client_id,
-                "client_secret",
-                self.credentials.client_secret,
-                "scope",
-                RCLONE_DRIVE_FILE_SCOPE,
-                "token",
-                token_json,
-                "root_folder_id",
-                folder_id,
-                "--non-interactive",
-            ],
-            "rclone config failed",
-        )
-
-    def _mount_rclone(self) -> None:
-        container_path = self._configured_container_path()
-        self._exec_checked(
-            ["/bin/sh", "-lc", f"mkdir -p {shlex.quote(str(container_path))}"],
-            "mount target creation failed",
-        )
-        self._exec_checked(
-            [
-                "rclone",
-                "mount",
-                f"{self.remote_name}:",
-                str(container_path),
-                "--daemon",
-                "--poll-interval",
-                RCLONE_POLL_INTERVAL,
-                "--vfs-cache-mode",
-                RCLONE_VFS_CACHE_MODE,
-                "--vfs-write-back",
-                RCLONE_VFS_WRITE_BACK,
-            ],
-            "rclone mount failed",
-        )
-
-    def _verify_mountpoint(self) -> None:
-        self._exec_checked(
-            ["mountpoint", "-q", str(self._configured_container_path())],
-            "mountpoint verification failed",
-        )
-
-    def _restore_persisted_mount(self) -> None:
-        config = os.environ.get("RCLONE_CONFIG")
-        if not config:
-            return
-        config_path = Path(config)
-        if config_path.parent.exists() and not config_path.parent.is_dir():
-            raise RuntimeError("persisted rclone config path parent is not a directory")
-        if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
-            return
-        self._state = "mounting"
-        self._mount_rclone()
-        self._verify_mountpoint()
-        self._auth_valid = True
-        self._mounted = True
-        self._state = "mounted"
-        self._message = "Google Drive is mounted."
-
-    def _exec_checked(self, command: list[str], message: str) -> None:
-        if self._runtime is None:
-            raise RuntimeError("Google Drive mount plugin has not been started.")
-        result = self._runtime.exec(command)
-        if result.exit_code != 0:
-            raise RuntimeError(f"{message}: {result.output}")
-
-    def _record_folder_id(self, folder_id: str | None) -> None:
-        if self._runtime is None:
-            return
-        mount = self._runtime.state.get(MOUNT_METADATA_STATE_KEY)
-        if isinstance(mount, MountMetadata):
-            mount.remote_folder_id = folder_id
-
-    def _redirect_uri(self) -> str:
-        return f"http://127.0.0.1:{self.host_port}/oauth/callback"
-
-    def _set_error(self, message: str) -> None:
-        self._state = "error"
-        self._message = message or "Google Drive mount failed."
-        self._auth_valid = False
-        self._mounted = False
+        return None
 
     @staticmethod
     def _append_once(values: list[str], value: str) -> None:
@@ -378,7 +130,58 @@ class GoogleDriveMountPluginService:
             raise ConfigurationError("GoogleDriveMountPluginService requires OpenCode runtime metadata")
         return metadata
 
-    def _configured_container_path(self) -> PurePosixPath:
-        if self.container_path is None:
-            raise RuntimeError("Google Drive mount target was not configured.")
-        return self.container_path
+
+def _install_auth_server_commands() -> list[str]:
+    module_dir = Path(__file__).parent
+    files = {
+        AUTH_SERVER_PATH: module_dir.joinpath("_auth_server.py").read_bytes(),
+        HTTP_HANDLER_PATH: module_dir.joinpath("_http_handler.py").read_bytes(),
+        LOGIN_PAGE_PATH: module_dir.joinpath("_login_page.py").read_bytes(),
+        LOGO_ASSET_PATH: module_dir.joinpath("assets", LOGO_ASSET_NAME).read_bytes(),
+        SHARED_STYLE_ASSET_PATH: module_dir.parent.joinpath(
+            "assets", SHARED_STYLE_ASSET_NAME
+        ).read_bytes(),
+    }
+    commands: list[str] = []
+    for target_path, content in files.items():
+        commands.extend(_install_file_commands(target_path, content))
+    return commands
+
+
+def _install_file_commands(target_path: str, content: bytes) -> list[str]:
+    encoded = base64.b64encode(content).decode("ascii")
+    commands = [
+        "python3 -c "
+        + repr(
+            "import pathlib; "
+            f"target = pathlib.Path({target_path!r}); "
+            "target.parent.mkdir(parents=True, exist_ok=True); "
+            "target.write_bytes(b'')"
+        )
+    ]
+    for index in range(0, len(encoded), 48_000):
+        chunk = encoded[index : index + 48_000]
+        commands.append(
+            "python3 -c "
+            + repr(
+                "import base64, pathlib; "
+                f"pathlib.Path({target_path!r}).open('ab').write("
+                f"base64.b64decode({chunk!r}))"
+            )
+        )
+    return commands
+
+
+def _auth_server_command() -> str:
+    return (
+        "GOOGLE_DRIVE_AUTH_PORT=$GOOGLE_DRIVE_AUTH_PORT "
+        "GOOGLE_DRIVE_AUTH_HOST_PORT=$GOOGLE_DRIVE_AUTH_HOST_PORT "
+        "GOOGLE_DRIVE_MOUNT_FOLDER_NAME=$GOOGLE_DRIVE_MOUNT_FOLDER_NAME "
+        "GOOGLE_DRIVE_MOUNT_CONTAINER_PATH=$GOOGLE_DRIVE_MOUNT_CONTAINER_PATH "
+        "GOOGLE_DRIVE_REMOTE_NAME=$GOOGLE_DRIVE_REMOTE_NAME "
+        "GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL=$GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL "
+        "GOOGLE_DRIVE_OAUTH_TOKEN_URL=$GOOGLE_DRIVE_OAUTH_TOKEN_URL "
+        "GOOGLE_DRIVE_API_BASE_URL=$GOOGLE_DRIVE_API_BASE_URL "
+        "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON=$GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON "
+        f"exec python3 {shlex.quote(AUTH_SERVER_PATH)}"
+    )

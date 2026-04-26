@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -95,10 +96,10 @@ def service_url(host_port: int, path: str) -> str:
     return f"http://127.0.0.1:{host_port}{path}"
 
 
-def extract_login_href(html: str) -> str:
-    match = re.search(r'href=["\']([^"\']+)["\']', html)
-    assert match is not None, html
-    return match.group(1)
+def extract_login_href(page_html: str) -> str:
+    match = re.search(r'href=["\']([^"\']+)["\']', page_html)
+    assert match is not None, page_html
+    return html.unescape(match.group(1))
 
 
 def complete_oauth_flow(host_port: int) -> HttpResponse:

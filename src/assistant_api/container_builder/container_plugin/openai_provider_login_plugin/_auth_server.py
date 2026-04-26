@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import os
 import sys
@@ -10,6 +9,11 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Literal
+
+if __package__:
+    from ._login_page import render_login_page
+else:
+    from _login_page import render_login_page
 
 
 PROVIDER_ID = "openai"
@@ -38,6 +42,7 @@ class OpenAIProviderAuthServer:
         self._message = "OpenAI provider is not authenticated."
         self._auth_valid = False
         self._pending_authorize: dict[str, Any] | None = None
+        self._callback_lock = threading.Lock()
 
     def start_in_thread(self, bind_host: str) -> None:
         self._validate_startup()
@@ -68,31 +73,37 @@ class OpenAIProviderAuthServer:
     def _login(self, query: dict[str, list[str]]) -> tuple[int, str, str]:
         status = self._status_payload()
         if status["state"] == "authenticated":
-            return 200, "text/html; charset=utf-8", self._html(
-                "OpenAI provider is already authenticated."
-            )
-        if self._pending_authorize is not None and query.get("complete") == ["1"]:
+            return 200, "text/html; charset=utf-8", self._render_login_page(status)
+        if self._pending_authorize is None:
+            self._start_pending_authorization()
+        if query.get("complete") == ["1"]:
             completed = self._complete_callback()
             status = self._status_payload()
             if status["state"] == "authenticated":
-                return 200, "text/html; charset=utf-8", self._html(
-                    "OpenAI provider is authenticated."
-                )
+                return 200, "text/html; charset=utf-8", self._render_login_page(status)
             if not completed or status["state"] == "error":
-                return 500, "text/html; charset=utf-8", self._html(self._message)
-        if self._pending_authorize is None:
-            if self.headless_method_index is None:
-                raise OpenAIProviderLoginError("OpenAI headless OAuth method was not initialized.")
-            self._pending_authorize = self._request_json(
-                "POST",
-                f"/provider/{PROVIDER_ID}/oauth/authorize",
-                "OpenAI headless OAuth authorize failed",
-                {"method": self.headless_method_index},
-            )
-        body = self._html(self._auth_instructions(self._pending_authorize))
-        return 200, "text/html; charset=utf-8", body
+                return 500, "text/html; charset=utf-8", self._render_login_page(status)
+        status = self._status_payload()
+        return 200, "text/html; charset=utf-8", self._render_login_page(status)
+
+    def _start_pending_authorization(self) -> None:
+        if self.headless_method_index is None:
+            raise OpenAIProviderLoginError("OpenAI headless OAuth method was not initialized.")
+        self._pending_authorize = self._request_json(
+            "POST",
+            f"/provider/{PROVIDER_ID}/oauth/authorize",
+            "OpenAI headless OAuth authorize failed",
+            {"method": self.headless_method_index},
+        )
+        self._state = "unauthenticated"
+        self._message = "Waiting for OpenAI provider authorization."
 
     def _complete_callback(self) -> bool:
+        if self._pending_authorize is None:
+            raise OpenAIProviderLoginError("OpenAI authorization has not been started.")
+        if not self._callback_lock.acquire(blocking=False):
+            self._message = "Waiting for OpenAI provider authorization."
+            return True
         try:
             result = self._request_json(
                 "POST",
@@ -104,10 +115,13 @@ class OpenAIProviderAuthServer:
         except Exception as error:
             self._set_error(str(error))
             return False
+        finally:
+            self._callback_lock.release()
         if result is True:
             self._auth_valid = True
             self._state = "authenticated"
             self._message = "OpenAI provider is authenticated."
+            self._pending_authorize = None
         else:
             self._message = "Waiting for OpenAI provider authorization."
         return True
@@ -136,6 +150,7 @@ class OpenAIProviderAuthServer:
         if auth_valid:
             self._state = "authenticated"
             self._message = "OpenAI provider is authenticated."
+            self._pending_authorize = None
         elif self._state != "error":
             self._state = "unauthenticated"
             if self._pending_authorize is None:
@@ -201,20 +216,11 @@ class OpenAIProviderAuthServer:
                 return index
         raise OpenAIProviderLoginError("OpenCode openai provider has no headless OAuth method")
 
-    def _auth_instructions(self, payload: dict[str, Any]) -> str:
-        url = payload.get("url")
-        instructions = payload.get("instructions")
-        if not isinstance(url, str) or not url:
-            raise OpenAIProviderLoginError("OpenAI authorize response did not include url")
-        if not isinstance(instructions, str):
-            instructions = "Complete OpenAI authorization in the linked browser page."
-        safe_url = html.escape(url, quote=True)
-        safe_instructions = html.escape(instructions, quote=True)
-        return (
-            f"<p>{safe_instructions}</p>"
-            f'<p><a href="{safe_url}" target="_blank">{safe_url}</a></p>'
-            "<p>After the OpenAI page confirms authorization, "
-            '<a href="/login?complete=1">complete login</a>.</p>'
+    def _render_login_page(self, status: dict[str, Any]) -> str:
+        return render_login_page(
+            provider_name=self.provider_name,
+            status=status,
+            authorize_payload=self._pending_authorize,
         )
 
     def _set_error(self, message: str) -> None:
@@ -253,10 +259,6 @@ class OpenAIProviderAuthServer:
                 self.wfile.write(payload)
 
         return Handler
-
-    @staticmethod
-    def _html(body: str) -> str:
-        return "<!doctype html><html><body>" + body + "</body></html>"
 
 
 def required_env(name: str) -> str:

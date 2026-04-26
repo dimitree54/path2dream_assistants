@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,28 @@ class _DockerClient:
 class _Container:
     id = "container-id"
     name = "notes-assistant-opencode"
+
+
+class _ExistingContainer:
+    def __init__(self, calls: list[object]) -> None:
+        self._calls = calls
+
+    def remove(self, force: bool = False) -> None:
+        self._calls.append(("remove", force))
+
+
+class _ExistingContainers:
+    def __init__(self, calls: list[object]) -> None:
+        self._calls = calls
+
+    def get(self, container_name: str) -> _ExistingContainer:
+        self._calls.append(("get", container_name))
+        return _ExistingContainer(self._calls)
+
+
+class _DockerClientWithExistingContainer:
+    def __init__(self, calls: list[object]) -> None:
+        self.containers = _ExistingContainers(calls)
 
 
 def test_init_accepts_plugins_and_container_name() -> None:
@@ -86,6 +109,36 @@ def test_build_and_run_builds_before_starting_container(monkeypatch) -> None:
 
     assert running.name == "notes-assistant-opencode"
     assert calls == ["build", "volumes", "run"]
+
+
+def test_build_and_run_logs_existing_container_replacement(monkeypatch, caplog) -> None:
+    calls: list[object] = []
+
+    def build_image(_docker_client: Any, _image_spec: ImageSpec, _image_tag: str) -> object:
+        calls.append("build")
+        return object()
+
+    def ensure_named_volumes(_docker_client: Any, _container_spec: ContainerSpec) -> None:
+        calls.append("volumes")
+
+    def run_container(_docker_client: Any, _container_spec: ContainerSpec) -> _Container:
+        calls.append("run")
+        return _Container()
+
+    monkeypatch.setattr(container_builder_service, "build_image", build_image)
+    monkeypatch.setattr(container_builder_service, "ensure_named_volumes", ensure_named_volumes)
+    monkeypatch.setattr(container_builder_service, "run_container", run_container)
+    caplog.set_level(logging.INFO, logger=container_builder_service.__name__)
+
+    builder = ContainerBuilderService(plugins=[], container_name="existing-container")
+    builder._docker_client = _DockerClientWithExistingContainer(calls)
+
+    builder.build_and_run()
+
+    assert ("remove", True) in calls
+    assert "Removing existing container before start: name=existing-container" in [
+        record.getMessage() for record in caplog.records
+    ]
 
 
 def test_minimal_builder_has_no_optional_container_features() -> None:

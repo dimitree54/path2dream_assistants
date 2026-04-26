@@ -13,13 +13,12 @@ from assistant_api.models import (
     OpenCodeRuntimeMetadata,
 )
 
-from ._auth_server import (
-    OpenAIProviderAuthServer,
-    OpenAIProviderLoginError,
-)
-
+from ._login_page import LOGO_ASSET_NAME, SHARED_STYLE_ASSET_NAME
 
 AUTH_SERVER_PATH = "/opt/notes-assistant-api/openai_provider_auth_server.py"
+LOGIN_PAGE_PATH = "/opt/notes-assistant-api/_login_page.py"
+LOGO_ASSET_PATH = f"/opt/notes-assistant-api/assets/{LOGO_ASSET_NAME}"
+SHARED_STYLE_ASSET_PATH = f"/opt/notes-assistant-api/assets/{SHARED_STYLE_ASSET_NAME}"
 
 
 class OpenAIProviderLoginPluginService:
@@ -32,22 +31,16 @@ class OpenAIProviderLoginPluginService:
             auth_container_port if auth_container_port is not None else host_port,
         )
         self.opencode_api_port: int | None = None
-        self._auth_server: OpenAIProviderAuthServer | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
         image.run_commands.append("apk add --no-cache python3")
-        image.run_commands.append(_install_auth_server_command())
+        image.run_commands.extend(_install_auth_server_commands())
 
     def configure_container(self, container: ContainerSpec) -> None:
         opencode_runtime = self._opencode_runtime(container.state)
         self.opencode_api_port = opencode_runtime.api_container_port
-        try:
-            self._auth_server = OpenAIProviderAuthServer(
-                opencode_api_port=self.opencode_api_port,
-                auth_port=self.auth_container_port,
-            )
-        except OpenAIProviderLoginError as error:
-            raise ConfigurationError(str(error)) from error
+        if self.opencode_api_port == self.auth_container_port:
+            raise ConfigurationError("OpenCode API port and OpenAI auth port must be different")
         container.env["OPENCODE_API_PORT"] = str(self.opencode_api_port)
         container.env["OPENAI_AUTH_PORT"] = str(self.auth_container_port)
         container.ports[self.auth_container_port] = self.host_port
@@ -59,23 +52,7 @@ class OpenAIProviderLoginPluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        if type(runtime.docker_client) is not object:
-            return None
-        if self._auth_server is None:
-            raise ConfigurationError("OpenAIProviderLoginPluginService requires OpenCode runtime metadata")
-        try:
-            self._auth_server.start_in_thread("127.0.0.1")
-        except OpenAIProviderLoginError as error:
-            raise ConfigurationError(str(error)) from error
         return None
-
-    def serve_forever(self) -> None:
-        if self._auth_server is None:
-            raise ConfigurationError("OpenAIProviderLoginPluginService requires OpenCode runtime metadata")
-        try:
-            self._auth_server.serve_forever("0.0.0.0")
-        except OpenAIProviderLoginError as error:
-            raise ConfigurationError(str(error)) from error
 
     @staticmethod
     def _validate_port(name: str, value: int) -> int:
@@ -91,18 +68,44 @@ class OpenAIProviderLoginPluginService:
         return metadata
 
 
-def _install_auth_server_command() -> str:
-    source = Path(__file__).with_name("_auth_server.py").read_text(encoding="utf-8")
-    encoded_source = base64.b64encode(source.encode("utf-8")).decode("ascii")
-    return (
-        "mkdir -p /opt/notes-assistant-api && "
+def _install_auth_server_commands() -> list[str]:
+    module_dir = Path(__file__).parent
+    files = {
+        AUTH_SERVER_PATH: module_dir.joinpath("_auth_server.py").read_bytes(),
+        LOGIN_PAGE_PATH: module_dir.joinpath("_login_page.py").read_bytes(),
+        LOGO_ASSET_PATH: module_dir.joinpath("assets", LOGO_ASSET_NAME).read_bytes(),
+        SHARED_STYLE_ASSET_PATH: module_dir.parent.joinpath(
+            "assets", SHARED_STYLE_ASSET_NAME
+        ).read_bytes(),
+    }
+    commands: list[str] = []
+    for target_path, content in files.items():
+        commands.extend(_install_file_commands(target_path, content))
+    return commands
+
+
+def _install_file_commands(target_path: str, content: bytes) -> list[str]:
+    encoded = base64.b64encode(content).decode("ascii")
+    commands = [
         "python3 -c "
         + repr(
-            "import base64, pathlib; "
-            f"pathlib.Path({AUTH_SERVER_PATH!r}).write_bytes("
-            f"base64.b64decode({encoded_source!r}))"
+            "import pathlib; "
+            f"target = pathlib.Path({target_path!r}); "
+            "target.parent.mkdir(parents=True, exist_ok=True); "
+            "target.write_bytes(b'')"
         )
-    )
+    ]
+    for index in range(0, len(encoded), 48_000):
+        chunk = encoded[index : index + 48_000]
+        commands.append(
+            "python3 -c "
+            + repr(
+                "import base64, pathlib; "
+                f"pathlib.Path({target_path!r}).open('ab').write("
+                f"base64.b64decode({chunk!r}))"
+            )
+        )
+    return commands
 
 
 def _auth_server_command() -> str:
