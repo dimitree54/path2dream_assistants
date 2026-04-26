@@ -18,9 +18,6 @@ tags:
 - проверяет provider auth через OpenCode server API;
 - проводит OAuth flow через OpenCode provider endpoints;
 - отдаёт JSON status для health checks и внешних gate-сервисов;
-- не запускает OpenCode server сам;
-- не включает OpenCode persistence;
-- не монтирует project directory.
 
 # Interfaces
 Публичный сервис этой реализации называется `OpenAIProviderLoginPluginService`.
@@ -38,10 +35,7 @@ plugin = OpenAIProviderLoginPluginService(host_port=4101)
 class OpenAIProviderLoginPluginService:
     def __init__(
         self,
-        host_port: int = 4101,
-        container_port: int = 4101,
-        provider_id: str = "openai",
-        opencode_api_url: str = "http://127.0.0.1:4096",
+        opencode_server_port: int = 4101,
     ) -> None:
         pass
 ```
@@ -60,18 +54,13 @@ OpenCode provider endpoints used by this service:
 - `POST /provider/{provider_id}/oauth/callback`.
 
 # Requirements
-- The default host port must be `4101`.
-- The default container port must be `4101`.
-- The default provider id must be `openai`.
 - `/login` must allow the user to start or complete provider login in a browser.
 - `/status` must return JSON with at least `authValid`, `state`, `message`, and `providerName`.
+- on status check, it should use opencode server api to check the openai provider status
 - Provider auth must be checked against the configured OpenCode API URL.
-- Missing OpenCode server availability must be reported as an explicit status state.
-- Missing OAuth methods for the configured provider must be reported as an explicit status state.
+- Missing OpenCode server availability must lead to fail fast
 - Successful auth must be visible through `/status`.
 - The service must fail fast on invalid init-time configuration.
-- The service must not configure OpenCode persistence.
-- The service must not mount project directories.
 
 ## Sub-services
 Не выделяются.
