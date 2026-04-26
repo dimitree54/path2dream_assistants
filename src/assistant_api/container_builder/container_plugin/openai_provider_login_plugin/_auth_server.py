@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+import html
+import json
+import os
+import sys
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Literal
+
+
+PROVIDER_ID = "openai"
+PROVIDER_NAME = "OpenAI"
+OpenAIAuthState = Literal["unavailable", "unauthenticated", "authenticated", "error"]
+
+
+class OpenAIProviderLoginError(RuntimeError):
+    pass
+
+
+class OpenAIProviderAuthServer:
+    def __init__(self, opencode_api_port: int, auth_port: int) -> None:
+        if opencode_api_port == auth_port:
+            raise OpenAIProviderLoginError(
+                "OPENCODE_API_PORT and OPENAI_AUTH_PORT must be different"
+            )
+        self.opencode_api_port = opencode_api_port
+        self.auth_port = auth_port
+        self.opencode_api_url = f"http://127.0.0.1:{opencode_api_port}"
+        self.provider_name = PROVIDER_NAME
+        self.headless_method_index: int | None = None
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self._state: OpenAIAuthState = "unauthenticated"
+        self._message = "OpenAI provider is not authenticated."
+        self._auth_valid = False
+        self._pending_authorize: dict[str, Any] | None = None
+
+    def start_in_thread(self, bind_host: str) -> None:
+        self._validate_startup()
+        self._server = ThreadingHTTPServer((bind_host, self.auth_port), self._handler_class())
+        self._server.plugin = self  # type: ignore[attr-defined]
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def serve_forever(self, bind_host: str) -> None:
+        self._validate_startup()
+        self._server = ThreadingHTTPServer((bind_host, self.auth_port), self._handler_class())
+        self._server.plugin = self  # type: ignore[attr-defined]
+        self._server.serve_forever()
+
+    def _validate_startup(self) -> None:
+        self._request_json("GET", "/global/health", "OpenCode server is unavailable")
+        provider_payload = self._request_json(
+            "GET", "/provider", "OpenCode provider list is unavailable"
+        )
+        provider = self._find_openai_provider(provider_payload)
+        provider_name = provider.get("name")
+        self.provider_name = provider_name if isinstance(provider_name, str) else PROVIDER_NAME
+        auth_payload = self._request_json(
+            "GET", "/provider/auth", "OpenCode provider auth list is unavailable"
+        )
+        self.headless_method_index = self._find_headless_method(auth_payload)
+
+    def _login(self, query: dict[str, list[str]]) -> tuple[int, str, str]:
+        status = self._status_payload()
+        if status["state"] == "authenticated":
+            return 200, "text/html; charset=utf-8", self._html(
+                "OpenAI provider is already authenticated."
+            )
+        if self._pending_authorize is not None and query.get("complete") == ["1"]:
+            completed = self._complete_callback()
+            status = self._status_payload()
+            if status["state"] == "authenticated":
+                return 200, "text/html; charset=utf-8", self._html(
+                    "OpenAI provider is authenticated."
+                )
+            if not completed or status["state"] == "error":
+                return 500, "text/html; charset=utf-8", self._html(self._message)
+        if self._pending_authorize is None:
+            if self.headless_method_index is None:
+                raise OpenAIProviderLoginError("OpenAI headless OAuth method was not initialized.")
+            self._pending_authorize = self._request_json(
+                "POST",
+                f"/provider/{PROVIDER_ID}/oauth/authorize",
+                "OpenAI headless OAuth authorize failed",
+                {"method": self.headless_method_index},
+            )
+        body = self._html(self._auth_instructions(self._pending_authorize))
+        return 200, "text/html; charset=utf-8", body
+
+    def _complete_callback(self) -> bool:
+        try:
+            result = self._request_json(
+                "POST",
+                f"/provider/{PROVIDER_ID}/oauth/callback",
+                "OpenAI headless OAuth callback failed",
+                {"method": self.headless_method_index},
+                timeout=300,
+            )
+        except Exception as error:
+            self._set_error(str(error))
+            return False
+        if result is True:
+            self._auth_valid = True
+            self._state = "authenticated"
+            self._message = "OpenAI provider is authenticated."
+        else:
+            self._message = "Waiting for OpenAI provider authorization."
+        return True
+
+    def _status(self) -> tuple[int, str, str]:
+        try:
+            payload = self._status_payload()
+            status = 200
+        except Exception as error:
+            payload = {
+                "authValid": False,
+                "state": "unavailable",
+                "message": str(error),
+                "providerName": self.provider_name,
+            }
+            status = 503
+        return status, "application/json", json.dumps(payload)
+
+    def _status_payload(self) -> dict[str, Any]:
+        provider_payload = self._request_json(
+            "GET", "/provider", "OpenCode provider status is unavailable"
+        )
+        connected = provider_payload.get("connected")
+        auth_valid = self._auth_valid or (isinstance(connected, list) and PROVIDER_ID in connected)
+        self._auth_valid = auth_valid
+        if auth_valid:
+            self._state = "authenticated"
+            self._message = "OpenAI provider is authenticated."
+        elif self._state != "error":
+            self._state = "unauthenticated"
+            if self._pending_authorize is None:
+                self._message = "OpenAI provider is not authenticated."
+        return {
+            "authValid": self._auth_valid,
+            "state": self._state,
+            "message": self._message,
+            "providerName": self.provider_name,
+        }
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        error_message: str,
+        payload: dict[str, Any] | None = None,
+        timeout: float = 5,
+    ) -> Any:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request = urllib.request.Request(
+            self.opencode_api_url + path,
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json"} if data is not None else {},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if response.status < 200 or response.status >= 300:
+                    raise OpenAIProviderLoginError(f"{error_message}: HTTP {response.status}")
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            error_body = error.read().decode("utf-8", errors="replace")
+            error_detail = f": {error_body}" if error_body else ""
+            raise OpenAIProviderLoginError(
+                f"{error_message}: HTTP {error.code}{error_detail}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise OpenAIProviderLoginError(f"{error_message}: {error.reason}") from error
+        except json.JSONDecodeError as error:
+            raise OpenAIProviderLoginError(f"{error_message}: invalid JSON response") from error
+
+    def _find_openai_provider(self, payload: Any) -> dict[str, Any]:
+        providers = payload.get("all") if isinstance(payload, dict) else None
+        if not isinstance(providers, list):
+            raise OpenAIProviderLoginError("OpenCode /provider response does not contain provider list")
+        for provider in providers:
+            if isinstance(provider, dict) and provider.get("id") == PROVIDER_ID:
+                return provider
+        raise OpenAIProviderLoginError("OpenCode provider list does not contain openai provider")
+
+    def _find_headless_method(self, payload: Any) -> int:
+        methods = payload.get(PROVIDER_ID) if isinstance(payload, dict) else None
+        if not isinstance(methods, list):
+            raise OpenAIProviderLoginError("OpenCode /provider/auth response does not contain openai methods")
+        for index, method in enumerate(methods):
+            if not isinstance(method, dict):
+                continue
+            searchable_method = " ".join(
+                str(method.get(key, "")) for key in ("id", "name", "label", "type")
+            ).lower()
+            if method.get("type") == "oauth" and "headless" in searchable_method:
+                return index
+        raise OpenAIProviderLoginError("OpenCode openai provider has no headless OAuth method")
+
+    def _auth_instructions(self, payload: dict[str, Any]) -> str:
+        url = payload.get("url")
+        instructions = payload.get("instructions")
+        if not isinstance(url, str) or not url:
+            raise OpenAIProviderLoginError("OpenAI authorize response did not include url")
+        if not isinstance(instructions, str):
+            instructions = "Complete OpenAI authorization in the linked browser page."
+        safe_url = html.escape(url, quote=True)
+        safe_instructions = html.escape(instructions, quote=True)
+        return (
+            f"<p>{safe_instructions}</p>"
+            f'<p><a href="{safe_url}" target="_blank">{safe_url}</a></p>'
+            "<p>After the OpenAI page confirms authorization, "
+            '<a href="/login?complete=1">complete login</a>.</p>'
+        )
+
+    def _set_error(self, message: str) -> None:
+        self._auth_valid = False
+        self._state = "error"
+        self._message = message or "OpenAI provider login failed."
+
+    def _handler_class(self) -> type[BaseHTTPRequestHandler]:
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *_args: Any) -> None:
+                return None
+
+            def do_GET(self) -> None:
+                plugin: OpenAIProviderAuthServer = self.server.plugin  # type: ignore[attr-defined]
+                parsed = urllib.parse.urlparse(self.path)
+                try:
+                    if parsed.path == "/login":
+                        self._send(*plugin._login(urllib.parse.parse_qs(parsed.query)))
+                        return
+                    if parsed.path == "/status":
+                        self._send(*plugin._status())
+                        return
+                    self._send(404, "text/plain; charset=utf-8", "Not found.")
+                except Exception as error:
+                    plugin._set_error(str(error))
+                    self._send(500, "text/plain; charset=utf-8", plugin._message)
+
+            def _send(self, status: int, content_type: str, body: str) -> None:
+                payload = body.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        return Handler
+
+    @staticmethod
+    def _html(body: str) -> str:
+        return "<!doctype html><html><body>" + body + "</body></html>"
+
+
+def required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise OpenAIProviderLoginError(f"{name} is required")
+    return value
+
+
+def required_port_env(name: str) -> int:
+    value = required_env(name)
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise OpenAIProviderLoginError(f"{name} must be an integer TCP port") from error
+    if port < 1 or port > 65535:
+        raise OpenAIProviderLoginError(f"{name} must be an integer TCP port")
+    return port
+
+
+def main() -> None:
+    try:
+        server = OpenAIProviderAuthServer(
+            opencode_api_port=required_port_env("OPENCODE_API_PORT"),
+            auth_port=required_port_env("OPENAI_AUTH_PORT"),
+        )
+        server.serve_forever("0.0.0.0")
+    except OpenAIProviderLoginError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1) from error
+
+
+if __name__ == "__main__":
+    main()

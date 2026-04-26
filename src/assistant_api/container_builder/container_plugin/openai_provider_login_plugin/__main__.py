@@ -1,0 +1,4 @@
+from .openai_provider_login_plugin_service import OpenAIProviderLoginPluginService
+
+
+OpenAIProviderLoginPluginService().serve_forever()
