@@ -17,9 +17,7 @@ tags:
 - устанавливает выбранные bundles в target directory;
 - проверяет, что OpenCode artifacts ещё не находятся в target directory;
 - fail fast вместо перезаписи существующих artifacts;
-- не запускает OpenCode;
-- не открывает ports;
-- не настраивает persistence.
+- uses the state to understand where to store the artifacts (it should be stored to the same dir, where opencode launched. Parent dir of where working dir is mounted)
 
 # Interfaces
 Публичный сервис этой реализации называется `OpenCodeArtifactsPluginService`.
@@ -27,7 +25,7 @@ tags:
 ```python
 from pathlib import PurePosixPath
 
-from assistant_api.container_builder.container_plugin.opencode_artifacts_plugin import (
+from assistant_api.container_builder.container_plugin.skills_sync_plugin import (
     OpenCodeArtifactsPluginService,
 )
 
@@ -36,11 +34,10 @@ plugin = OpenCodeArtifactsPluginService(["yid-notes-assistant"])
 
 ## Init time
 ```python
-class OpenCodeArtifactsPluginService:
+class SkillsSyncPluginService:
     def __init__(
         self,
         plugin_names: list[str],
-        target_path: PurePosixPath = PurePosixPath("/workspace"),
         repo_url: str = "https://github.com/dimitree54/opencode-plugins.git",
         repo_ref: str = "main",
     ) -> None:
@@ -54,7 +51,6 @@ Runtime-интерфейс не добавляет ничего нового, а
 - `plugin_names` must contain at least one plugin name.
 - Duplicate plugin names must fail fast.
 - Missing plugin names in the artifacts repository must fail fast.
-- The default target directory must be `/workspace`.
 - The default repository must be `https://github.com/dimitree54/opencode-plugins.git`.
 - The default repository ref must be `main`.
 - The service must fail before installation if target `AGENTS.md` already exists.
