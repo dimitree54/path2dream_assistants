@@ -44,6 +44,9 @@ def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
         ports=docker_ports(container_spec.ports),
         volumes=docker_volumes(container_spec.volumes),
         working_dir=str(container_spec.working_dir) if container_spec.working_dir else None,
+        devices=container_spec.devices,
+        cap_add=container_spec.cap_add,
+        security_opt=container_spec.security_opt,
         init=True,
     )
 

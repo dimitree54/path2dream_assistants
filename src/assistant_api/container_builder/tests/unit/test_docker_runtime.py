@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from assistant_api.container_builder._docker_runtime import DEFAULT_COMMAND, docker_ports, docker_volumes
+from typing import Any
+
+from assistant_api.container_builder._docker_runtime import (
+    DEFAULT_COMMAND,
+    docker_ports,
+    docker_volumes,
+    run_container,
+)
 from assistant_api.container_builder._dockerfile import render_dockerfile
-from assistant_api.models import ImageSpec, VolumeMount
+from assistant_api.models import ContainerSpec, ImageSpec, VolumeMount
 
 
 def test_default_command_keeps_minimal_container_running() -> None:
@@ -34,3 +41,30 @@ def test_render_dockerfile_clears_base_entrypoint() -> None:
         "ENTRYPOINT []\n"
         "RUN mkdir -p /workspace\n"
     )
+
+
+def test_run_container_passes_runtime_capabilities_to_docker_sdk() -> None:
+    calls = []
+
+    class _Containers:
+        def run(self, *_args: Any, **kwargs: Any) -> object:
+            calls.append(kwargs)
+            return object()
+
+    class _DockerClient:
+        containers = _Containers()
+
+    run_container(
+        _DockerClient(),
+        ContainerSpec(
+            name="container-name",
+            image_tag="image-tag",
+            devices=["/dev/fuse"],
+            cap_add=["SYS_ADMIN"],
+            security_opt=["apparmor:unconfined"],
+        ),
+    )
+
+    assert calls[0]["devices"] == ["/dev/fuse"]
+    assert calls[0]["cap_add"] == ["SYS_ADMIN"]
+    assert calls[0]["security_opt"] == ["apparmor:unconfined"]

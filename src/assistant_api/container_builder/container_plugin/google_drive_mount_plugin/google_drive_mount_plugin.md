@@ -49,6 +49,7 @@ class GoogleDriveMountPluginService:
         mode: str = "rw",
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
         oauth_token_url: str = "https://oauth2.googleapis.com/token",
+        drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
     ) -> None:
         pass
 ```
@@ -76,19 +77,20 @@ The mounted folder is app-owned from the OAuth perspective. User-visible Drive o
 - The default container port must be `4102`.
 - The default mount target must be `/workspace/project`.
 - The default rclone remote name must be `gdrive`.
-- The service must require `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
+- The service must require `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_DRIVE_MOUNT_FOLDER_NAME`.
 - OAuth authorize and token endpoints must be configurable at init time and default to Google OAuth endpoints.
 - Custom OAuth endpoints must be sufficient for the full OAuth flow, so local OAuth-compatible providers can be used without live Google OAuth.
+- Google Drive API base URL must be configurable at init time and default to `https://www.googleapis.com/drive/v3`.
 - The service must request the minimum Google Drive OAuth scopes that support the visible app-owned folder use case.
 - The default Google Drive OAuth scope must be `https://www.googleapis.com/auth/drive.file`.
 - The service must not request full-drive scopes such as `https://www.googleapis.com/auth/drive`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.metadata`, or `https://www.googleapis.com/auth/drive.metadata.readonly`.
 - The service must not use `https://www.googleapis.com/auth/drive.appdata` or `https://www.googleapis.com/auth/drive.appfolder` as the mounted file storage scope because the mounted files must be visible to the user in Google Drive UI.
-- The service must create or reuse a dedicated app-owned folder in the user's `My Drive`.
+- The service must create or reuse a dedicated app-owned folder in the user's `My Drive` using folder name from `GOOGLE_DRIVE_MOUNT_FOLDER_NAME`.
 - The mounted rclone remote root must be restricted to this dedicated app-owned folder, not the user's whole `My Drive`.
 - The service must fail fast if the dedicated app-owned folder cannot be created, found, authorized, or mounted.
 - `/login` must return an HTML login page that lets the user authorize Google Drive in a browser.
 - `GET /oauth/callback` must complete the OAuth redirect flow.
-- `/logout` must remove stored Google Drive auth for this container state.
+- `/logout` must stop the active Google Drive mount, remove stored Google Drive auth and rclone config for this container state, and return the service to unauthenticated state.
 - `/status` must return JSON with at least `authValid`, `mounted`, `state`, and `message`.
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
 - The service must create rclone config from Google OAuth credentials before mounting.
@@ -96,7 +98,7 @@ The mounted folder is app-owned from the OAuth perspective. User-visible Drive o
 - `/status` must report `mounted=true` only after `rclone mount` starts successfully and the container path is verified as a mountpoint.
 - The service must request Docker runtime capabilities required for FUSE, including `/dev/fuse`, `cap_add`, and security options.
 - The service must record `MountMetadata` so mount-aware plugins can use it.
-- Google Drive `MountMetadata` must identify the remote mount source using `remote_name` and must not imply a local host directory.
+- Google Drive `MountMetadata` must identify the remote mount source using `remote_name`, use the Google Drive folder name as its display basename, and must not imply a local host directory.
 - The service must fail fast instead of silently using a local directory when Google Drive is not mounted.
 - The service must not expose or depend on local host directory mounts.
 - The service must not configure OpenCode persistence.

@@ -19,5 +19,9 @@ test = [
 where = ["src"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not manual'"
+markers = [
+  "manual: live integration tests that require external credentials or human interaction",
+]
 pythonpath = ["src"]
 testpaths = ["src"]

@@ -15,4 +15,7 @@ class ContainerSpec:
     ports: dict[int, int] = field(default_factory=dict)
     working_dir: PurePosixPath | None = None
     command: list[str] | None = None
+    devices: list[str] = field(default_factory=list)
+    cap_add: list[str] = field(default_factory=list)
+    security_opt: list[str] = field(default_factory=list)
     state: dict[str, object] = field(default_factory=dict)
