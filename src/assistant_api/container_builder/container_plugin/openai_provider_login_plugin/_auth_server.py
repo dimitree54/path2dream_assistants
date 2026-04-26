@@ -12,8 +12,18 @@ from typing import Any, Literal
 
 if __package__:
     from ._login_page import render_login_page
+    from ._opencode_config import (
+        OpenCodeConfigError,
+        configure_default_model,
+        validate_openai_opencode_model,
+    )
 else:
     from _login_page import render_login_page
+    from _opencode_config import (  # type: ignore[no-redef]
+        OpenCodeConfigError,
+        configure_default_model,
+        validate_openai_opencode_model,
+    )
 
 
 PROVIDER_ID = "openai"
@@ -26,13 +36,19 @@ class OpenAIProviderLoginError(RuntimeError):
 
 
 class OpenAIProviderAuthServer:
-    def __init__(self, opencode_api_port: int, auth_port: int) -> None:
+    def __init__(
+        self,
+        opencode_api_port: int,
+        auth_port: int,
+        opencode_model: str,
+    ) -> None:
         if opencode_api_port == auth_port:
             raise OpenAIProviderLoginError(
                 "OpenCode API port and OpenAI auth port must be different"
             )
         self.opencode_api_port = opencode_api_port
         self.auth_port = auth_port
+        self.opencode_model = validate_openai_opencode_model(opencode_model)
         self.opencode_api_url = f"http://127.0.0.1:{opencode_api_port}"
         self.provider_name = PROVIDER_NAME
         self.headless_method_index: int | None = None
@@ -118,6 +134,7 @@ class OpenAIProviderAuthServer:
         finally:
             self._callback_lock.release()
         if result is True:
+            configure_default_model(self.opencode_model)
             self._auth_valid = True
             self._state = "authenticated"
             self._message = "OpenAI provider is authenticated."
@@ -284,9 +301,10 @@ def main() -> None:
         server = OpenAIProviderAuthServer(
             opencode_api_port=required_port_env("OPENCODE_API_PORT"),
             auth_port=required_port_env("OPENAI_AUTH_PORT"),
+            opencode_model=required_env("OPENCODE_MODEL"),
         )
         server.serve_forever("0.0.0.0")
-    except OpenAIProviderLoginError as error:
+    except (OpenAIProviderLoginError, OpenCodeConfigError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1) from error
 

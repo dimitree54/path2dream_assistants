@@ -194,6 +194,7 @@ def start_plugin(plugin: object, state: dict[str, object] | None = None) -> Cont
     server = OpenAIProviderAuthServer(
         opencode_api_port=plugin.opencode_api_port,
         auth_port=plugin.auth_container_port,
+        opencode_model=plugin.opencode_model,
     )
     server.start_in_thread("127.0.0.1")
     _started_auth_servers.append(server)

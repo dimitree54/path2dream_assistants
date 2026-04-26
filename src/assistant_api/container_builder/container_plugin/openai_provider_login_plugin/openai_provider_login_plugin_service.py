@@ -9,27 +9,37 @@ from assistant_api.models import (
     ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
+    ContainerStartupTask,
     ImageSpec,
     OpenCodeRuntimeMetadata,
 )
 
 from ._login_page import LOGO_ASSET_NAME, SHARED_STYLE_ASSET_NAME
+from ._opencode_config import OpenCodeConfigError, validate_openai_opencode_model
 
 AUTH_SERVER_PATH = "/opt/notes-assistant-api/openai_provider_auth_server.py"
+OPENCODE_CONFIG_PATH = "/opt/notes-assistant-api/_opencode_config.py"
 LOGIN_PAGE_PATH = "/opt/notes-assistant-api/_login_page.py"
 LOGO_ASSET_PATH = f"/opt/notes-assistant-api/assets/{LOGO_ASSET_NAME}"
 SHARED_STYLE_ASSET_PATH = f"/opt/notes-assistant-api/assets/{SHARED_STYLE_ASSET_NAME}"
+DEFAULT_OPENCODE_MODEL = "openai/gpt-5.5"
 
 
 class OpenAIProviderLoginPluginService:
     name = "openai-provider-login"
 
-    def __init__(self, host_port: int, auth_container_port: int | None = None) -> None:
+    def __init__(
+        self,
+        host_port: int,
+        auth_container_port: int | None = None,
+        opencode_model: str = DEFAULT_OPENCODE_MODEL,
+    ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.auth_container_port = self._validate_port(
             "auth_container_port",
             auth_container_port if auth_container_port is not None else host_port,
         )
+        self.opencode_model = self._validate_opencode_model(opencode_model)
         self.opencode_api_port: int | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -43,7 +53,14 @@ class OpenAIProviderLoginPluginService:
             raise ConfigurationError("OpenCode API port and OpenAI auth port must be different")
         container.env["OPENCODE_API_PORT"] = str(self.opencode_api_port)
         container.env["OPENAI_AUTH_PORT"] = str(self.auth_container_port)
+        container.env["OPENCODE_MODEL"] = self.opencode_model
         container.ports[self.auth_container_port] = self.host_port
+        container.startup_tasks.append(
+            ContainerStartupTask(
+                name="openai-opencode-default-model",
+                command=["python3", OPENCODE_CONFIG_PATH, self.opencode_model],
+            )
+        )
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="openai-provider-login",
@@ -61,10 +78,19 @@ class OpenAIProviderLoginPluginService:
         return value
 
     @staticmethod
+    def _validate_opencode_model(value: object) -> str:
+        try:
+            return validate_openai_opencode_model(value)
+        except OpenCodeConfigError as error:
+            raise ConfigurationError(str(error)) from error
+
+    @staticmethod
     def _opencode_runtime(state: dict[str, object]) -> OpenCodeRuntimeMetadata:
         metadata = state.get(OPENCODE_RUNTIME_STATE_KEY)
         if not isinstance(metadata, OpenCodeRuntimeMetadata):
-            raise ConfigurationError("OpenAIProviderLoginPluginService requires OpenCode runtime metadata")
+            raise ConfigurationError(
+                "OpenAIProviderLoginPluginService requires OpenCode runtime metadata"
+            )
         return metadata
 
 
@@ -72,6 +98,7 @@ def _install_auth_server_commands() -> list[str]:
     module_dir = Path(__file__).parent
     files = {
         AUTH_SERVER_PATH: module_dir.joinpath("_auth_server.py").read_bytes(),
+        OPENCODE_CONFIG_PATH: module_dir.joinpath("_opencode_config.py").read_bytes(),
         LOGIN_PAGE_PATH: module_dir.joinpath("_login_page.py").read_bytes(),
         LOGO_ASSET_PATH: module_dir.joinpath("assets", LOGO_ASSET_NAME).read_bytes(),
         SHARED_STYLE_ASSET_PATH: module_dir.parent.joinpath(
@@ -121,5 +148,6 @@ def _auth_server_command() -> str:
         "done; "
         "OPENCODE_API_PORT=$OPENCODE_API_PORT "
         "OPENAI_AUTH_PORT=$OPENAI_AUTH_PORT "
+        "OPENCODE_MODEL=$OPENCODE_MODEL "
         f"exec python3 {AUTH_SERVER_PATH}"
     )

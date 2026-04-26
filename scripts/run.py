@@ -8,8 +8,14 @@ from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin.google_drive_mount_plugin import (
     GoogleDriveMountPluginService,
 )
+from assistant_api.container_builder.container_plugin.google_drive_persistence_plugin import (
+    GoogleDrivePersistencePluginService,
+)
 from assistant_api.container_builder.container_plugin.openai_provider_login_plugin import (
     OpenAIProviderLoginPluginService,
+)
+from assistant_api.container_builder.container_plugin.opencode_persistence_plugin import (
+    OpenCodePersistencePluginService,
 )
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
@@ -31,11 +37,13 @@ def main() -> None:
     builder = ContainerBuilderService(
         plugins=[
             OpenCodeServerPluginService(host_port=host_port),
+            OpenAIProviderLoginPluginService(host_port=openai_auth_port),
+            OpenCodePersistencePluginService(),
             GoogleDriveMountPluginService(
                 host_port=google_drive_auth_port,
                 drive_folder_name="notes",
             ),
-            OpenAIProviderLoginPluginService(host_port=openai_auth_port),
+            GoogleDrivePersistencePluginService(),
             SkillsSyncPluginService(["yid-notes-assistant"]),
         ]
     )

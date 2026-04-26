@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from importlib import resources
 from pathlib import Path
+
+import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
 from openai_provider_login_contract_helpers import (
@@ -125,8 +128,14 @@ def test_login_page_uses_repository_lfs_brand_asset() -> None:
 def test_automatic_headless_callback_completion_reports_authenticated(
     openai_provider_env: OpenAIProviderEnv,
     opencode_provider_stub: OpenCodeProviderStub,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    plugin = service_class()(
+        host_port=openai_provider_env.openai_auth_port,
+        opencode_model="openai/gpt-5.5-fast",
+    )
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
     )._prepare_specs()
@@ -149,6 +158,12 @@ def test_automatic_headless_callback_completion_reports_authenticated(
     assert "OPENAI-CONTRACT-CODE" not in automatic_completion.text
     assert status["authValid"] is True
     assert opencode_provider_stub.state.callback_requests == [{"method": 1}]
+    config = json.loads(
+        tmp_path.joinpath("config", "opencode", "opencode.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert config["model"] == "openai/gpt-5.5-fast"
 
 
 def _style_block(page_html: str) -> str:

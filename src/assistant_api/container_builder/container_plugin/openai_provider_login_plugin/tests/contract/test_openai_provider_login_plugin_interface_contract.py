@@ -22,9 +22,14 @@ def test_public_service_import_and_init_signature_uses_init_ports() -> None:
     signature = inspect.signature(service)
 
     assert service.__name__ == "OpenAIProviderLoginPluginService"
-    assert list(signature.parameters) == ["host_port", "auth_container_port"]
+    assert list(signature.parameters) == [
+        "host_port",
+        "auth_container_port",
+        "opencode_model",
+    ]
     assert signature.parameters["host_port"].default is inspect.Parameter.empty
     assert signature.parameters["auth_container_port"].default is None
+    assert signature.parameters["opencode_model"].default == "openai/gpt-5.5"
 
 
 def test_init_does_not_require_opencode_or_openai_auth_port_env(
@@ -36,6 +41,7 @@ def test_init_does_not_require_opencode_or_openai_auth_port_env(
     plugin = service_class()(host_port=unused_port())
 
     assert plugin.host_port > 0
+    assert plugin.opencode_model == "openai/gpt-5.5"
 
 
 @pytest.mark.parametrize(
@@ -61,6 +67,21 @@ def test_init_rejects_invalid_ports(
         service_class()(**init_kwargs)
 
 
+@pytest.mark.parametrize(
+    "opencode_model",
+    [
+        "",
+        "   ",
+        "gpt-5.5",
+        "anthropic/claude-sonnet-4-5",
+        123,
+    ],
+)
+def test_init_rejects_invalid_opencode_model(opencode_model: object) -> None:
+    with pytest.raises(ConfigurationError, match="opencode_model"):
+        service_class()(host_port=unused_port(), opencode_model=opencode_model)
+
+
 def test_configure_container_requires_opencode_runtime_state(
     openai_provider_env: OpenAIProviderEnv,
 ) -> None:
@@ -73,7 +94,10 @@ def test_configure_container_requires_opencode_runtime_state(
 def test_configure_container_rejects_same_opencode_and_auth_port(
     openai_provider_env: OpenAIProviderEnv,
 ) -> None:
-    plugin = service_class()(host_port=unused_port(), auth_container_port=openai_provider_env.opencode_api_port)
+    plugin = service_class()(
+        host_port=unused_port(),
+        auth_container_port=openai_provider_env.opencode_api_port,
+    )
 
     with pytest.raises(ConfigurationError, match="OpenCode API port.*OpenAI auth port"):
         ContainerBuilderService(
@@ -101,10 +125,35 @@ def test_prepare_specs_publishes_auth_port_and_env_without_persistence(
     }
     assert container_spec.env["OPENCODE_API_PORT"] == str(openai_provider_env.opencode_api_port)
     assert container_spec.env["OPENAI_AUTH_PORT"] == str(openai_provider_env.openai_auth_port)
+    assert container_spec.env["OPENCODE_MODEL"] == "openai/gpt-5.5"
     assert container_spec.volumes == {}
     assert container_spec.command is None
     assert container_spec.working_dir is None
     assert not {"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"} & set(container_spec.env)
+    assert len(container_spec.startup_tasks) == 1
+    assert container_spec.startup_tasks[0].name == "openai-opencode-default-model"
+    assert container_spec.startup_tasks[0].command[-1] == "openai/gpt-5.5"
+    assert "_opencode_config.py" in container_spec.startup_tasks[0].command[-2]
+
+
+def test_prepare_specs_uses_custom_opencode_model(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    plugin = service_class()(
+        host_port=openai_provider_env.openai_auth_port,
+        opencode_model="openai/gpt-5.5-fast",
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+
+    assert plugin.opencode_model == "openai/gpt-5.5-fast"
+    assert container_spec.env["OPENCODE_MODEL"] == "openai/gpt-5.5-fast"
+    assert container_spec.startup_tasks[0].command[-1] == "openai/gpt-5.5-fast"
 
 
 def test_configure_container_does_not_overwrite_existing_opencode_command(

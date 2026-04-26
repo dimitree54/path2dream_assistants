@@ -39,7 +39,7 @@ class OpenAIProviderLoginPluginService:
         self,
         host_port: int,
         auth_container_port: int | None = None,
-        opencode_model: str = "gpt-5.5",
+        opencode_model: str = "openai/gpt-5.5",
     ) -> None:
         pass
 ```
@@ -48,7 +48,7 @@ The auth flow must run fully inside the container. The host/external auth port i
 
 The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either auth host/external port or OpenCode API port.
 
-The OpenAI model OpenCode should use by default is configured through `opencode_model`. When not provided, the service uses `gpt-5.5`.
+The OpenAI model OpenCode should use by default is configured through `opencode_model`. When not provided, the service uses `openai/gpt-5.5`.
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
@@ -97,7 +97,7 @@ OpenCode provider endpoints used by this service:
 - On status check, it should use OpenCode server API to check the OpenAI provider status.
 - Provider auth must be checked against the local OpenCode API URL derived from OpenCode runtime metadata.
 - The service must accept the OpenAI model name for OpenCode through init-time configuration as `opencode_model`.
-- The default `opencode_model` must be `gpt-5.5`.
+- The default `opencode_model` must be `openai/gpt-5.5`.
 - After successful OpenAI provider auth, OpenCode must be configured to use `opencode_model` as its default OpenAI model.
 - After successful OpenAI provider auth, OpenCode API calls made without an explicit model must use `opencode_model`.
 - Missing OpenCode server availability at startup must lead to fail fast.

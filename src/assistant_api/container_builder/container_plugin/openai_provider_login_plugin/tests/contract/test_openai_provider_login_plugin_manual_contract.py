@@ -23,9 +23,6 @@ from openai_provider_login_contract_helpers import (
 )
 
 
-OPENCODE_TEST_MODEL = "openai/gpt-5.5"
-
-
 @pytest.mark.manual
 def test_manual_live_openai_provider_headless_login_round_trip() -> None:
     require_manual_env()
@@ -150,8 +147,6 @@ def _assert_opencode_can_use_authenticated_openai(running: object) -> None:
                 [
                     "opencode",
                     "run",
-                    "--model",
-                    OPENCODE_TEST_MODEL,
                     "--format",
                     "json",
                     "--dir",
