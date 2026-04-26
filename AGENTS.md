@@ -61,12 +61,12 @@ In fact, try to avoid over-exploring the repo by reading unrelated to the curren
 
 The venv and dependencies are managed through uv. Run everything through `uv run`
 
-All env vars are managed through doppler project "zoom_bot". Check skill "working-with-env-vars-and-secrets" if you need to add new vars.
+All env vars are managed through doppler project "notes_assistant". Check skill "working-with-env-vars-and-secrets" if you need to add new vars.
 
 To run the app, use command like
 
 ```bash
-doppler run -p zoom_bot -c dev -- uv run <your-command>
+doppler run -p notes_assistant -c dev -- uv run <your-command>
 ```
 
 # Core development principles:
