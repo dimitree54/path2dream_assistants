@@ -10,6 +10,9 @@ from assistant_api.container_builder.container_plugin.opencode_persistence_plugi
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
+from assistant_api.container_builder.container_plugin.skills_sync_plugin import (
+    SkillsSyncPluginService,
+)
 from assistant_api.container_builder.container_plugin.sync_mount_dir_name_plugin import (
     SyncMountDirNamePluginService,
 )
@@ -21,6 +24,7 @@ def main() -> None:
         plugins=[
             LocalDirMountPluginService("."),
             SyncMountDirNamePluginService(),
+            SkillsSyncPluginService(["yid-notes-assistant"]),
             OpenCodePersistencePluginService(),
             OpenCodeWebServerPluginService(host_port=host_port),
         ]
