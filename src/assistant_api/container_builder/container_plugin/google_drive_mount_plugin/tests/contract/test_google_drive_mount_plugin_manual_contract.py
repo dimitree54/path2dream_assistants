@@ -7,21 +7,21 @@ import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
 from google_drive_mount_contract_helpers import (
+    auth_port,
     extract_login_href,
     read_url,
     require_manual_env,
     service_class,
     service_url,
     status_json,
-    unused_port,
 )
 
 
 @pytest.mark.manual
 def test_manual_live_google_drive_mount_round_trip() -> None:
     require_manual_env()
-    host_port = unused_port()
-    plugin = service_class()(host_port=host_port)
+    host_port = auth_port()
+    plugin = service_class()()
     builder = ContainerBuilderService(
         plugins=[plugin],
         container_name=f"notes-assistant-gdrive-manual-{os.getpid()}",

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from google_drive_mount_contract_helpers import GOOGLE_DRIVE_FILE_SCOPE
+from google_drive_mount_contract_helpers import GOOGLE_DRIVE_FILE_SCOPE, unused_port
 
 
 @dataclass(slots=True)
@@ -169,9 +169,20 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
 @pytest.fixture
 def google_env(monkeypatch: pytest.MonkeyPatch) -> str:
     folder_name = "Notes Assistant API Contract Folder"
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id")
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON",
+        json.dumps(
+            {
+                "web": {
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                    "redirect_uris": ["http://127.0.0.1/oauth/callback"],
+                }
+            }
+        ),
+    )
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_FOLDER_NAME", folder_name)
+    monkeypatch.setenv("GOOGLE_DRIVE_AUTH_PORT", str(unused_port()))
     return folder_name
 
 

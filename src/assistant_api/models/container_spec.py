@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
+from .container_startup_task import ContainerStartupTask
 from .volume_mount import VolumeMount
 
 
@@ -18,4 +19,5 @@ class ContainerSpec:
     devices: list[str] = field(default_factory=list)
     cap_add: list[str] = field(default_factory=list)
     security_opt: list[str] = field(default_factory=list)
+    startup_tasks: list[ContainerStartupTask] = field(default_factory=list)
     state: dict[str, object] = field(default_factory=dict)

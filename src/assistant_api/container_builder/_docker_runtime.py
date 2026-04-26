@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +38,7 @@ def build_image(docker_client: Any, image_spec: ImageSpec, image_tag: str) -> Bu
 def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
     return docker_client.containers.run(
         container_spec.image_tag,
-        command=container_spec.command or DEFAULT_COMMAND,
+        command=container_command(container_spec),
         name=container_spec.name,
         detach=True,
         environment=container_spec.env,
@@ -49,6 +50,16 @@ def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
         security_opt=container_spec.security_opt,
         init=True,
     )
+
+
+def container_command(container_spec: ContainerSpec) -> list[str]:
+    command = container_spec.command or DEFAULT_COMMAND
+    if not container_spec.startup_tasks:
+        return command
+
+    shell_parts = [shlex.join(task.command) for task in container_spec.startup_tasks]
+    shell_parts.append("exec " + shlex.join(command))
+    return ["/bin/sh", "-lc", " && ".join(shell_parts)]
 
 
 def ensure_named_volumes(docker_client: Any, container_spec: ContainerSpec) -> None:

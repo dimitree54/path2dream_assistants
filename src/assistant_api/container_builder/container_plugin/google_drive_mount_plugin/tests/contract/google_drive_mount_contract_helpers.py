@@ -21,9 +21,9 @@ FORBIDDEN_SCOPES = {
     "https://www.googleapis.com/auth/drive.appfolder",
 }
 REQUIRED_ENV = (
-    "GOOGLE_OAUTH_CLIENT_ID",
-    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON",
     "GOOGLE_DRIVE_MOUNT_FOLDER_NAME",
+    "GOOGLE_DRIVE_AUTH_PORT",
 )
 
 
@@ -59,6 +59,10 @@ def unused_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def auth_port() -> int:
+    return int(os.environ["GOOGLE_DRIVE_AUTH_PORT"])
 
 
 def read_url(

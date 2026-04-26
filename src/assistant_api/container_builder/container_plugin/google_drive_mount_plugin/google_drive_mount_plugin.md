@@ -34,7 +34,7 @@ from assistant_api.container_builder.container_plugin.google_drive_mount_plugin 
     GoogleDriveMountPluginService,
 )
 
-plugin = GoogleDriveMountPluginService(host_port=4102)
+plugin = GoogleDriveMountPluginService()
 ```
 
 ## Init time
@@ -42,8 +42,6 @@ plugin = GoogleDriveMountPluginService(host_port=4102)
 class GoogleDriveMountPluginService:
     def __init__(
         self,
-        host_port: int = 4102,
-        container_port: int = 4102,
         container_path: PurePosixPath = PurePosixPath("/workspace/project"),
         remote_name: str = "gdrive",
         mode: str = "rw",
@@ -72,12 +70,18 @@ Published endpoints:
 
 The mounted folder is app-owned from the OAuth perspective. User-visible Drive operations such as viewing, downloading, renaming, moving, or deleting files are part of the supported model. Automatic access to arbitrary files that the user manually adds through Google Drive UI is not part of this contract unless those files are explicitly opened, selected, shared, or otherwise authorized for this app under the same minimal-scope access model.
 
+# Google OAuth credentials
+Google OAuth Web client credentials must be provided through `GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON`.
+
+The variable must contain the full Google Console OAuth client JSON with a top-level `web` object. The service must read `client_id` and `client_secret` from that JSON and fail fast if the variable is missing, is not valid JSON, does not describe a Web client, or does not contain both required fields.
+
 # Requirements
-- The default host port must be `4102`.
-- The default container port must be `4102`.
+- The service must not hardcode a default Google Drive auth port.
+- The service must require `GOOGLE_DRIVE_AUTH_PORT`.
+- `GOOGLE_DRIVE_AUTH_PORT` must be parsed as an integer TCP port and used as the Google Drive auth host port and container port.
 - The default mount target must be `/workspace/project`.
 - The default rclone remote name must be `gdrive`.
-- The service must require `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `GOOGLE_DRIVE_MOUNT_FOLDER_NAME`.
+- The service must require `GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON` and `GOOGLE_DRIVE_MOUNT_FOLDER_NAME`.
 - OAuth authorize and token endpoints must be configurable at init time and default to Google OAuth endpoints.
 - Custom OAuth endpoints must be sufficient for the full OAuth flow, so local OAuth-compatible providers can be used without live Google OAuth.
 - Google Drive API base URL must be configurable at init time and default to `https://www.googleapis.com/drive/v3`.

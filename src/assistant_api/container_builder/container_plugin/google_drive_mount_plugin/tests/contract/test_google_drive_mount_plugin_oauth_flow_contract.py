@@ -14,7 +14,7 @@ from google_drive_mount_contract_helpers import (
     service_class,
     service_url,
     status_json,
-    unused_port,
+    auth_port,
 )
 from google_drive_mount_oauth_stub import OAuthDriveStub, google_env, oauth_drive_stub
 from google_drive_mount_rclone_stub import FakeRclone, fake_rclone, start_plugin
@@ -25,9 +25,8 @@ def test_login_page_uses_custom_authorize_url_and_only_drive_file_scope(
     oauth_drive_stub: OAuthDriveStub,
     fake_rclone: FakeRclone,
 ) -> None:
-    host_port = unused_port()
+    host_port = auth_port()
     plugin = service_class()(
-        host_port=host_port,
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
@@ -60,9 +59,8 @@ def test_oauth_callback_creates_folder_configures_rclone_and_reports_mounted(
     oauth_drive_stub: OAuthDriveStub,
     fake_rclone: FakeRclone,
 ) -> None:
-    host_port = unused_port()
+    host_port = auth_port()
     plugin = service_class()(
-        host_port=host_port,
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
@@ -99,9 +97,8 @@ def test_oauth_callback_reuses_existing_folder_without_duplicate_creation(
     fake_rclone: FakeRclone,
 ) -> None:
     oauth_drive_stub.state.existing_folder_id = "existing-folder-id"
-    host_port = unused_port()
+    host_port = auth_port()
     plugin = service_class()(
-        host_port=host_port,
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
@@ -128,9 +125,8 @@ def test_logout_unmounts_and_clears_auth_config(
     oauth_drive_stub: OAuthDriveStub,
     fake_rclone: FakeRclone,
 ) -> None:
-    host_port = unused_port()
+    host_port = auth_port()
     plugin = service_class()(
-        host_port=host_port,
         oauth_authorize_url=oauth_drive_stub.authorize_url,
         oauth_token_url=oauth_drive_stub.token_url,
         drive_api_base_url=oauth_drive_stub.drive_api_base_url,
