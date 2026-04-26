@@ -14,14 +14,14 @@ tags:
 То есть он:
 - требует `MountMetadata` из стандартного mount-aware state;
 - fail fast, если ни один предыдущий plugin не предоставил mount metadata (не примонтирована никакая папка);
-- создаёт подпапку `inbox` внутри примонтированной директории (`MountMetadata.container_path`) через container startup task;
 - запускает собственный HTTP-сервер (FastAPI) как container managed process, который обслуживает endpoint загрузки;
 - принимает файл через multipart/form-data (поле `file`), сохраняет его в `<container_path>/inbox/<original_filename>`;
+- создаёт подпапку `inbox` лениво во время обработки upload-запроса;
 - при совпадении имён перезаписывает существующий файл;
 - отклоняет опасные имена файлов (path traversal, абсолютные пути);
 - после успешной загрузки возвращает абсолютный путь к файлу внутри контейнера;
 - не управляет другими endpoint контейнера;
-- не выполняет иных операций с файлами;
+- не выполняет иных операций с файлами, кроме создания подпапки `inbox`;
 - не настраивает persistence;
 - не имеет ограничений на размер загружаемого файла.
 
@@ -54,12 +54,13 @@ class InboxUploadPluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
-During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, add a startup task to create the `inbox` subdirectory, and add a managed process for the FastAPI upload HTTP server. During `configure_image`, the service installs Python 3 and copies the upload handler script into the container image.
+During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, and add a managed process for the FastAPI upload HTTP server. It must not create `inbox` through a startup task. During `configure_image`, the service installs Python 3 and copies the upload handler script into the container image.
 
 During `post_start`, the service performs no host-side actions — the upload endpoint is served entirely by the container managed process.
 
 Upload endpoint поведение (FastAPI HTTP-сервер внутри контейнера):
 - Принимает POST-запрос с файлом в multipart/form-data (поле `file`);
+- Создаёт `<container_path>/inbox`, если этой директории ещё нет;
 - Сохраняет файл в `<container_path>/inbox/<original_filename>`, где `container_path` взят из `MountMetadata`;
 - При совпадении имён перезаписывает существующий файл;
 - Отклоняет имена файлов, содержащие path traversal (`../`, `..\\`) или являющиеся абсолютными путями — возвращает HTTP 400;
@@ -70,7 +71,8 @@ Upload endpoint поведение (FastAPI HTTP-сервер внутри ко�
 # Requirements
 - Сервис должен требовать `MountMetadata` из стандартного mount-aware state (`MOUNT_METADATA_STATE_KEY`).
 - Сервис должен fail fast, если mount metadata отсутствует — не примонтирована никакая папка.
-- Подпапка `inbox` должна создаваться через container startup task: `mkdir -p <container_path>/inbox`.
+- Сервис не должен создавать подпапку `inbox` через container startup task.
+- Подпапка `inbox` должна создаваться лениво upload handler во время обработки upload-запроса.
 - Upload endpoint должен работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.

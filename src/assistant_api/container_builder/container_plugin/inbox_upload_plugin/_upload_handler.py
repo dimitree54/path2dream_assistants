@@ -25,6 +25,7 @@ async def upload_file(file: UploadFile = File(...)):
         return JSONResponse(status_code=400, content={"detail": "unsafe filename"})
 
     inbox_dir = os.path.join(CONTAINER_PATH, "inbox")
+    os.makedirs(inbox_dir, exist_ok=True)
     file_path = os.path.join(inbox_dir, file.filename)
     content = await file.read()
     with open(file_path, "wb") as f:

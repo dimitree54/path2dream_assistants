@@ -9,7 +9,6 @@ from assistant_api.models import (
     ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
-    ContainerStartupTask,
     ImageSpec,
     MountMetadata,
 )
@@ -49,12 +48,6 @@ class OutboxDownloadPluginService:
     def configure_container(self, container: ContainerSpec) -> None:
         mount = self._mount_metadata(container.state)
         container_path = str(mount.container_path)
-        container.startup_tasks.append(
-            ContainerStartupTask(
-                name="create-outbox",
-                command=["mkdir", "-p", f"{container_path}/outbox"],
-            )
-        )
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="outbox-download-server",

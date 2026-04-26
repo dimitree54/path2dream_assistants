@@ -130,6 +130,9 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
 - The service must create rclone config from Google OAuth credentials before mounting.
 - Google Drive must be mounted with `rclone mount`.
+- The Google Drive mount target must be absent or empty before `rclone mount` starts.
+- The service must fail fast with a clear error if the mount target is non-empty before mount.
+- The service must not use `rclone mount --allow-non-empty`.
 - `rclone mount` must poll Google Drive-side changes at least once per 10 minutes.
 - `rclone mount` must use VFS write cache mode `writes`, so tools can use filesystem operations such as rewriting existing files in-place, seek/truncate, random writes, and opening files for read/write.
 - Cached VFS writes must use an explicit write-back delay of `5s` before upload to Google Drive after file changes are closed/flushed.

@@ -148,11 +148,11 @@ def test_configure_container_rejects_state_without_mount_key() -> None:
 
 
 # ---------------------------------------------------------------------------
-# configure_container contract — outbox directory creation
+# configure_container contract — no startup directory creation
 # ---------------------------------------------------------------------------
 
 
-def test_configure_container_adds_outbox_startup_task() -> None:
+def test_configure_container_does_not_add_outbox_startup_task() -> None:
     plugin = service_class()(host_port=unused_port())
     metadata = mount_metadata(
         container_path=PurePosixPath("/workspace/project"),
@@ -162,18 +162,14 @@ def test_configure_container_adds_outbox_startup_task() -> None:
         plugins=[_MountStatePlugin(metadata), plugin]
     )._prepare_specs()
 
-    outbox_tasks = [
-        t for t in container_spec.startup_tasks
-        if "outbox" in " ".join(t.command)
+    assert not [
+        task
+        for task in container_spec.startup_tasks
+        if "outbox" in " ".join(task.command).lower()
     ]
-    assert len(outbox_tasks) == 1
-    assert outbox_tasks[0].name == "create-outbox"
-    assert PurePosixPath("/workspace/project/outbox").as_posix() in " ".join(
-        outbox_tasks[0].command
-    )
 
 
-def test_configure_container_outbox_path_derived_from_mount_metadata_container_path() -> None:
+def test_configure_container_managed_process_uses_mount_metadata_container_path() -> None:
     plugin = service_class()(host_port=unused_port())
     metadata = mount_metadata(
         container_path=PurePosixPath("/mnt/drive/folder"),
@@ -183,31 +179,13 @@ def test_configure_container_outbox_path_derived_from_mount_metadata_container_p
         plugins=[_MountStatePlugin(metadata), plugin]
     )._prepare_specs()
 
-    outbox_tasks = [
-        t for t in container_spec.startup_tasks
-        if "outbox" in " ".join(t.command)
+    outbox_processes = [
+        process
+        for process in container_spec.managed_processes
+        if "outbox" in repr(process).lower()
     ]
-    assert len(outbox_tasks) == 1
-    assert "/mnt/drive/folder/outbox" in " ".join(outbox_tasks[0].command)
-
-
-def test_configure_container_outbox_startup_task_creates_parents() -> None:
-    plugin = service_class()(host_port=unused_port())
-    metadata = mount_metadata(
-        container_path=PurePosixPath("/deeply/nested/path"),
-    )
-
-    _image_spec, container_spec = ContainerBuilderService(
-        plugins=[_MountStatePlugin(metadata), plugin]
-    )._prepare_specs()
-
-    outbox_tasks = [
-        t for t in container_spec.startup_tasks
-        if "outbox" in " ".join(t.command)
-    ]
-    assert len(outbox_tasks) == 1
-    command_str = " ".join(outbox_tasks[0].command)
-    assert "-p" in command_str or "--parents" in command_str
+    assert len(outbox_processes) == 1
+    assert "/mnt/drive/folder" in repr(outbox_processes[0])
 
 
 # ---------------------------------------------------------------------------
@@ -403,11 +381,7 @@ def test_configure_container_works_with_local_mount_source() -> None:
     )._prepare_specs()
 
     assert container_spec.state[MOUNT_METADATA_STATE_KEY].source_type == "local"
-    outbox_tasks = [
-        t for t in container_spec.startup_tasks
-        if "outbox" in " ".join(t.command)
-    ]
-    assert len(outbox_tasks) == 1
+    assert container_spec.startup_tasks == []
 
 
 def test_configure_container_works_with_remote_mount_source() -> None:
@@ -423,11 +397,7 @@ def test_configure_container_works_with_remote_mount_source() -> None:
     )._prepare_specs()
 
     assert container_spec.state[MOUNT_METADATA_STATE_KEY].source_type == "remote"
-    outbox_tasks = [
-        t for t in container_spec.startup_tasks
-        if "outbox" in " ".join(t.command)
-    ]
-    assert len(outbox_tasks) == 1
+    assert container_spec.startup_tasks == []
 
 
 def test_configure_container_behavior_identical_for_local_and_remote() -> None:
@@ -453,14 +423,7 @@ def test_configure_container_behavior_identical_for_local_and_remote() -> None:
         plugins=[_MountStatePlugin(metadata_remote), plugin_remote]
     )._prepare_specs()
 
-    outbox_tasks_l = [
-        t for t in ctr_l.startup_tasks if "outbox" in " ".join(t.command)
-    ]
-    outbox_tasks_r = [
-        t for t in ctr_r.startup_tasks if "outbox" in " ".join(t.command)
-    ]
-
-    assert outbox_tasks_l[0].command == outbox_tasks_r[0].command
+    assert ctr_l.startup_tasks == ctr_r.startup_tasks == []
     assert ctr_l.ports == ctr_r.ports
     assert ctr_l.command is None and ctr_r.command is None
     assert ctr_l.working_dir is None and ctr_r.working_dir is None

@@ -14,8 +14,8 @@ tags:
 То есть он:
 - требует `MountMetadata` из стандартного mount-aware state;
 - fail fast, если ни один предыдущий plugin не предоставил mount metadata (не примонтирована никакая папка);
-- создаёт подпапку `outbox` внутри примонтированной директории (`MountMetadata.container_path`) через container startup task;
 - запускает собственный HTTP-сервер (FastAPI) как container managed process, который обслуживает outbox endpoints;
+- не создаёт подпапку `outbox` во время container startup;
 - предоставляет endpoint для листинга файлов в `<container_path>/outbox` (GET-запрос);
 - предоставляет endpoint для скачивания конкретного файла по имени (GET-запрос); после успешного скачивания файл удаляется из outbox;
 - отклоняет опасные имена файлов в download endpoint (path traversal, абсолютные пути);
@@ -55,14 +55,14 @@ class OutboxDownloadPluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
-During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, add a startup task to create the `outbox` subdirectory, and add a managed process for the FastAPI outbox HTTP server. During `configure_image`, the service installs Python 3 and copies the outbox handler script into the container image.
+During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, and add a managed process for the FastAPI outbox HTTP server. It must not create `outbox` through a startup task. During `configure_image`, the service installs Python 3 and copies the outbox handler script into the container image.
 
 During `post_start`, the service performs no host-side actions — the outbox endpoints are served entirely by the container managed process.
 
 ### List endpoint
 Листинг endpoint поведение (GET-запрос):
 - Возвращает HTTP 200 с JSON-массивом, содержащим имена файлов в директории `outbox`;
-- Если директория пуста — возвращает HTTP 200 с пустым JSON-массивом `[]`;
+- Если директория отсутствует или пуста — возвращает HTTP 200 с пустым JSON-массивом `[]`;
 - POST, PUT, DELETE и другие методы — возвращает HTTP 405 Method Not Allowed.
 
 ### Download endpoint
@@ -71,13 +71,14 @@ During `post_start`, the service performs no host-side actions — the outbox en
 - Если файл с указанным именем существует в `<container_path>/outbox/<filename>` — возвращает HTTP 200 с содержимым файла в теле ответа;
 - После успешной отправки содержимого файл удаляется из outbox-директории;
 - Если файл не найден — возвращает HTTP 404;
+- Если директория `outbox` отсутствует — возвращает HTTP 404;
 - Отклоняет имена файлов, содержащие path traversal (`../`, `..\\`) или являющиеся абсолютными путями — возвращает HTTP 400;
 - POST, PUT, DELETE и другие методы — возвращает HTTP 405 Method Not Allowed.
 
 # Requirements
 - Сервис должен требовать `MountMetadata` из стандартного mount-aware state (`MOUNT_METADATA_STATE_KEY`).
 - Сервис должен fail fast, если mount metadata отсутствует — не примонтирована никакая папка.
-- Подпапка `outbox` должна создаваться через container startup task: `mkdir -p <container_path>/outbox`.
+- Сервис не должен создавать подпапку `outbox` через container startup task.
 - Outbox endpoints должны работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.

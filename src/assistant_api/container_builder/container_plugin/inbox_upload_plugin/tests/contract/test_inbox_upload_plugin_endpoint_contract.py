@@ -205,6 +205,9 @@ def test_upload_endpoint_saves_file_in_inbox_directory(tmp_path: Path) -> None:
     builder = _run_inbox_container(tmp_path, host_port)
     try:
         content = b"file content for saving test"
+        inbox_dir = tmp_path / "mount" / "inbox"
+        assert not inbox_dir.exists()
+
         response = _upload_file(
             _inbox_url(host_port),
             content,
@@ -212,7 +215,7 @@ def test_upload_endpoint_saves_file_in_inbox_directory(tmp_path: Path) -> None:
         )
 
         assert response.status == 200
-        saved_path = tmp_path / "mount" / "inbox" / "save_test.txt"
+        saved_path = inbox_dir / "save_test.txt"
         assert saved_path.exists()
         assert saved_path.read_bytes() == content
     finally:

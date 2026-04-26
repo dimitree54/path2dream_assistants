@@ -9,7 +9,6 @@ from assistant_api.models import (
     ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
-    ContainerStartupTask,
     ImageSpec,
     MountMetadata,
 )
@@ -45,12 +44,6 @@ class InboxUploadPluginService:
     def configure_container(self, container: ContainerSpec) -> None:
         mount = self._mount_metadata(container.state)
         container_path = str(mount.container_path)
-        container.startup_tasks.append(
-            ContainerStartupTask(
-                name="create-inbox",
-                command=["mkdir", "-p", f"{container_path}/inbox"],
-            )
-        )
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="inbox-upload-server",

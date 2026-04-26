@@ -276,6 +276,7 @@ class GoogleDriveMountAuthServer:
             ["/bin/sh", "-lc", f"mkdir -p {shlex.quote(str(self.container_path))}"],
             "mount target creation failed",
         )
+        self._verify_mount_target_empty()
         self._exec_checked(
             [
                 "rclone",
@@ -291,6 +292,20 @@ class GoogleDriveMountAuthServer:
                 RCLONE_VFS_WRITE_BACK,
             ],
             "rclone mount failed",
+        )
+
+    def _verify_mount_target_empty(self) -> None:
+        target = Path(self.container_path)
+        try:
+            next(target.iterdir())
+        except StopIteration:
+            return
+        except FileNotFoundError as error:
+            raise GoogleDriveMountAuthError(
+                f"Google Drive mount target does not exist after creation: {self.container_path}"
+            ) from error
+        raise GoogleDriveMountAuthError(
+            f"Google Drive mount target must be empty before mount: {self.container_path}"
         )
 
     def _verify_mountpoint(self) -> None:
