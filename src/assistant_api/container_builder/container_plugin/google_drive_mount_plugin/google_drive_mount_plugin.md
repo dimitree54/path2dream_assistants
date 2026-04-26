@@ -9,15 +9,16 @@ tags:
 Его задача — подключить Google Drive как mount source вместо локальной директории.
 
 # Responsibility
-Единая ответственность этого сервиса — авторизовать Google Drive и смонтировать его внутрь container через `rclone mount`.
+Единая ответственность этого сервиса — авторизовать Google Drive с минимальным доступом к видимой app-owned папке и смонтировать эту папку внутрь container через `rclone mount`.
 
 То есть он:
 - запускает отдельный Google Drive auth web server;
 - публикует его наружу на отдельный host port;
 - показывает browser login page;
+- создаёт или переиспользует обычную видимую папку приложения в Google Drive;
 - создаёт rclone config после Google OAuth;
 - запускает `rclone mount`;
-- монтирует Google Drive в тот же container path, который использует local mount;
+- монтирует эту Google Drive папку в тот же container path, который использует local mount;
 - сохраняет `MountMetadata` в стандартный mount-aware state;
 - отдаёт JSON status для проверки login/mount state;
 - не запускает OpenCode;
@@ -61,6 +62,15 @@ Published endpoints:
 - `GET /logout`;
 - `GET /status`.
 
+# Google Drive access model
+Сервис использует intermediate Google Drive access level:
+- mounted storage is a normal user-visible folder in `My Drive`;
+- the app must be able to read and write files it creates inside this folder;
+- the user must be able to see and manage this folder and its files through Google Drive UI;
+- the app must not receive full-drive access.
+
+The mounted folder is app-owned from the OAuth perspective. User-visible Drive operations such as viewing, downloading, renaming, moving, or deleting files are part of the supported model. Automatic access to arbitrary files that the user manually adds through Google Drive UI is not part of this contract unless those files are explicitly opened, selected, shared, or otherwise authorized for this app under the same minimal-scope access model.
+
 # Requirements
 - The default host port must be `4102`.
 - The default container port must be `4102`.
@@ -69,6 +79,13 @@ Published endpoints:
 - The service must require `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
 - OAuth authorize and token endpoints must be configurable at init time and default to Google OAuth endpoints.
 - Custom OAuth endpoints must be sufficient for the full OAuth flow, so local OAuth-compatible providers can be used without live Google OAuth.
+- The service must request the minimum Google Drive OAuth scopes that support the visible app-owned folder use case.
+- The default Google Drive OAuth scope must be `https://www.googleapis.com/auth/drive.file`.
+- The service must not request full-drive scopes such as `https://www.googleapis.com/auth/drive`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.metadata`, or `https://www.googleapis.com/auth/drive.metadata.readonly`.
+- The service must not use `https://www.googleapis.com/auth/drive.appdata` or `https://www.googleapis.com/auth/drive.appfolder` as the mounted file storage scope because the mounted files must be visible to the user in Google Drive UI.
+- The service must create or reuse a dedicated app-owned folder in the user's `My Drive`.
+- The mounted rclone remote root must be restricted to this dedicated app-owned folder, not the user's whole `My Drive`.
+- The service must fail fast if the dedicated app-owned folder cannot be created, found, authorized, or mounted.
 - `/login` must return an HTML login page that lets the user authorize Google Drive in a browser.
 - `GET /oauth/callback` must complete the OAuth redirect flow.
 - `/logout` must remove stored Google Drive auth for this container state.
