@@ -57,7 +57,7 @@ Runtime-интерфейс не добавляет ничего нового, а
 
 During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, and add a managed process for the FastAPI outbox HTTP server. It must not create `outbox` through a startup task. During `configure_image`, the service installs Python 3 and copies the outbox handler script into the container image.
 
-During `post_start`, the service performs no host-side actions — the outbox endpoints are served entirely by the container managed process.
+During `post_start`, the service must verify inside the container that the list endpoint can see a probe file, the download endpoint returns that file, and the file is removed after download. If `MountMetadata.source_type` is `remote`, the service must verify the mount is a real mountpoint before endpoint probing, so it cannot silently read from or write into an unmounted local fallback directory.
 
 ### List endpoint
 Листинг endpoint поведение (GET-запрос):
@@ -79,6 +79,7 @@ During `post_start`, the service performs no host-side actions — the outbox en
 - Сервис должен требовать `MountMetadata` из стандартного mount-aware state (`MOUNT_METADATA_STATE_KEY`).
 - Сервис должен fail fast, если mount metadata отсутствует — не примонтирована никакая папка.
 - Сервис не должен создавать подпапку `outbox` через container startup task.
+- During `post_start`, the service must fail fast if the outbox endpoints or required mount source are not healthy inside the container.
 - Outbox endpoints должны работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.
@@ -90,7 +91,7 @@ During `post_start`, the service performs no host-side actions — the outbox en
 - Download endpoint должен возвращать HTTP 404, если файл не найден.
 - Download endpoint должен отклонять имена файлов с path traversal (`../`) или абсолютные пути (`/etc/...`) — HTTP 400.
 - Сервис не должен иметь ограничений на размер скачиваемого файла.
-- Сервис должен работать с любым источником mount (local, Google Drive, и др.) — `MountMetadata.source_type` не влияет на поведение.
+- Сервис должен работать с любым healthy источником mount (local, Google Drive, и др.).
 - Outbox handler должен быть написан на Python с использованием FastAPI.
 
 ## Sub-services

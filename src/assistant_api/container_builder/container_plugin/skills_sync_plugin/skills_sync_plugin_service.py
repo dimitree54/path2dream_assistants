@@ -38,6 +38,7 @@ class SkillsSyncPluginService:
         self.plugin_names = list(plugin_names)
         self.repo_url = repo_url
         self.repo_ref = repo_ref
+        self._target_dir: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
         image.run_commands.append("apk add --no-cache git python3")
@@ -46,15 +47,26 @@ class SkillsSyncPluginService:
         if container.working_dir is None:
             raise ConfigurationError("SkillsSyncPluginService requires working_dir")
 
+        self._target_dir = str(container.working_dir)
         container.startup_tasks.append(
             ContainerStartupTask(
                 name="install-opencode-artifact-bundles",
-                command=["/bin/sh", "-lc", self._install_command(str(container.working_dir))],
+                command=["/bin/sh", "-lc", self._install_command(self._target_dir)],
             )
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        if self._target_dir is None:
+            raise RuntimeError("skills sync target directory was not configured")
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _installed_artifacts_health_command(self._target_dir),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"skills sync health check failed: {result.output}")
 
     def _install_command(self, target_dir: str) -> str:
         quoted_plugins = " ".join(shlex.quote(name) for name in self.plugin_names)
@@ -86,3 +98,18 @@ class SkillsSyncPluginService:
                 ),
             ]
         )
+
+
+def _installed_artifacts_health_command(target_dir: str) -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            f"target_dir={shlex.quote(target_dir)}",
+            'test -f "$target_dir/AGENTS.md"',
+            'test -d "$target_dir/.opencode"',
+            (
+                "find \"$target_dir/.opencode\" -mindepth 2 -type f "
+                "| grep -q ."
+            ),
+        ]
+    )

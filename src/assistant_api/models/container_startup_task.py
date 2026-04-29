@@ -7,3 +7,4 @@ from dataclasses import dataclass
 class ContainerStartupTask:
     name: str
     command: list[str]
+    owner_plugin_name: str | None = None

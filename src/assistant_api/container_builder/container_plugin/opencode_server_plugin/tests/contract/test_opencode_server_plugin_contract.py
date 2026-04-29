@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
+import pytest
+
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
 from assistant_api.container_builder.container_plugin.opencode_server_plugin import (
@@ -55,15 +57,48 @@ def test_opencode_server_plugin_uses_configured_port_and_existing_working_dir() 
     assert runtime.api_container_port == 5096
 
 
-def test_opencode_server_plugin_does_not_configure_image_or_post_start() -> None:
+def test_opencode_server_plugin_does_not_configure_image_and_self_checks_post_start() -> None:
     plugin = OpenCodeServerPluginService(host_port=4097)
     image_spec = ImageSpec()
 
     assert plugin.configure_image(image_spec) is None
     assert image_spec.run_commands == []
-    assert (
-        plugin.post_start(
-            ContainerRuntimeContext(docker_client=object(), container=object(), state={})
-        )
-        is None
+    container = _SuccessfulExecContainer()
+    plugin.post_start(
+        ContainerRuntimeContext(docker_client=object(), container=container, state={})
     )
+    assert container.commands
+    assert "/global/health" in container.commands[0][2]
+
+
+def test_opencode_server_post_start_fails_when_health_probe_fails() -> None:
+    plugin = OpenCodeServerPluginService(host_port=4097)
+
+    with pytest.raises(RuntimeError, match="OpenCode server health check failed"):
+        plugin.post_start(
+            ContainerRuntimeContext(
+                docker_client=object(),
+                container=_SuccessfulExecContainer(exit_code=1, output="not ready"),
+                state={},
+            )
+        )
+
+
+class _SuccessfulExecContainer:
+    def __init__(self, exit_code: int = 0, output: str = "") -> None:
+        self.exit_code = exit_code
+        self.output = output
+        self.commands: list[list[str]] = []
+
+    def exec_run(self, command: list[str]) -> object:
+        self.commands.append(command)
+        exit_code = self.exit_code
+        output = self.output.encode("utf-8")
+
+        class Result:
+            pass
+
+        result = Result()
+        result.exit_code = exit_code
+        result.output = output
+        return result

@@ -45,11 +45,14 @@ class OpenCodePersistencePluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
+During `post_start`, the service must verify inside the container that the configured OpenCode config and data directories exist and are writable.
+
 # Requirements
 - Without this plugin, OpenCode Web may still run, but config/auth/session state is not guaranteed to survive container recreation.
 - The default `HOME` must be `/tmp/opencode-home`.
 - The default config volume must mount to `/tmp/opencode-home/.config/opencode`.
 - The default data volume must mount to `/tmp/opencode-home/.local/share/opencode`.
+- The service must fail fast if the configured OpenCode state directories are not writable inside the container.
 - The service must not start OpenCode Web.
 - The service must not expose ports.
 - The service must not mount host project directories.

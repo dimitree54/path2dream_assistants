@@ -79,6 +79,8 @@ Published endpoints:
 - `GET /logout`;
 - `GET /status`.
 
+During `post_start`, the service must wait until its container-local `/status` endpoint is reachable and not in `error` state. If persisted auth for the configured remote exists, `post_start` must also verify `mounted=true`, `authValid=true`, mountpoint health, remote readability, and mount filesystem usability.
+
 # Google Drive access model
 Сервис использует intermediate Google Drive access level:
 - mounted storage is a normal user-visible folder in `My Drive`;
@@ -129,6 +131,9 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - `/status` must return JSON with at least `authValid`, `mounted`, `state`, and `message`.
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
 - The service must create rclone config from Google OAuth credentials before mounting.
+- Rclone config token data must include an rclone-compatible `expiry` timestamp, not only Google OAuth `expires_in`, so persisted auth can refresh expired access tokens.
+- Persisted rclone configs created by older versions without token `expiry` must be normalized before restore attempts.
+- If a persisted token has a future `expiry` but Google rejects the access token as invalid, restore must force a refresh using the persisted refresh token and retry the read probe once.
 - Google Drive must be mounted with `rclone mount`.
 - The Google Drive mount target must be absent or empty before `rclone mount` starts.
 - The service must fail fast with a clear error if the mount target is non-empty before mount.
@@ -137,6 +142,7 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - `rclone mount` must use VFS write cache mode `writes`, so tools can use filesystem operations such as rewriting existing files in-place, seek/truncate, random writes, and opening files for read/write.
 - Cached VFS writes must use an explicit write-back delay of `5s` before upload to Google Drive after file changes are closed/flushed.
 - `/status` must report `mounted=true` only after `rclone mount` starts successfully and the container path is verified as a mountpoint.
+- Mounted state must also require a successful read-only remote probe against the configured rclone remote.
 - The service must request Docker runtime capabilities required for FUSE, including `/dev/fuse`, `cap_add`, and security options.
 - The service must record `MountMetadata` so mount-aware plugins can use it.
 - Google Drive `MountMetadata` must identify the remote mount source using `remote_name`, use the Google Drive folder name as its display basename, and must not imply a local host directory.
@@ -146,6 +152,11 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - Required persisted-mount restore work must fail container startup immediately when it fails; it must not allow the container to keep running with the Google Drive auth endpoint missing or dead.
 - When persisted Google Drive auth exists and mount restore is required before serving browser auth endpoints, that restore step must run as blocking startup work, not as part of the long-running auth HTTP process.
 - The long-running Google Drive auth HTTP server must start only after required blocking startup work for this plugin has completed successfully.
+- The service must fail fast if persisted auth exists but the restored Google Drive mount is not healthy inside the container.
+- Manual live contract tests for this service must run as `pytest.mark.manual` and use a real container, real OAuth login, and real `rclone mount`.
+- Manual live contract tests for this service must compose [[../google_drive_persistence_plugin/google_drive_persistence_plugin.md|GoogleDrivePersistencePluginService]] so auth state survives container recreation during the test run.
+- Manual live contract tests for this service must verify that `/workspace/project/test.md` exists in the mounted folder root and its content is exactly `zebra`.
+- Manual live contract tests for this service must clean only test-created subdirectories in the mounted folder and must call `/logout` at the end of the manual run.
 
 ## Sub-services
 Не выделяются.

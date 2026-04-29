@@ -57,6 +57,9 @@ class FakeContainer:
 
     def exec_run(self, command: list[str]) -> ExecRunResult:
         self.commands.append(command)
+        if command[:2] == ["/bin/sh", "-lc"]:
+            result = subprocess.run(command, check=False, capture_output=True, text=True)
+            return ExecRunResult(result.returncode, result.stdout + result.stderr)
         if command[:2] == ["mountpoint", "-q"]:
             return ExecRunResult(0 if self.mount_marker.exists() else 1, "not mounted")
         if command and command[0] == "rclone":
@@ -100,7 +103,6 @@ def start_mount_plugin(
         container=FakeContainer(fake_rclone.mount_marker),
         state=state,
     )
-    plugin.post_start(runtime)
     for task in container_spec.startup_tasks:
         command = list(task.command)
         if command[:2] == ["/bin/sh", "-lc"]:
@@ -121,6 +123,7 @@ def start_mount_plugin(
     )
     server.start_in_thread("127.0.0.1")
     _started_auth_servers.append(server)
+    plugin.post_start(runtime)
     return runtime
 
 
@@ -227,6 +230,15 @@ if args[:1] == ["mount"]:
         raise SystemExit(84)
     pathlib.Path(cache_dir).mkdir(parents=True, exist_ok=True)
     mount_marker.write_text("mounted", encoding="utf-8")
+    raise SystemExit(0)
+if args[:1] == ["lsf"]:
+    if not config_path.exists():
+        print("rclone config does not exist", file=sys.stderr)
+        raise SystemExit(82)
+    remote = args[1].rstrip(":") if len(args) > 1 else ""
+    if f"[{remote}]" not in config_path.read_text(encoding="utf-8"):
+        print("configured remote does not exist", file=sys.stderr)
+        raise SystemExit(83)
     raise SystemExit(0)
 if args[:1] in [["unmount"], ["cleanup"]]:
     mount_marker.unlink(missing_ok=True)

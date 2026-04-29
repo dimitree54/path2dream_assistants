@@ -118,7 +118,22 @@ class GoogleDriveMountPluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        if self.container_path is None:
+            raise RuntimeError("Google Drive mount container path was not configured")
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _auth_status_health_command(
+                    auth_container_port=self.auth_container_port,
+                    container_path=str(self.container_path),
+                    remote_name=self.remote_name,
+                    mode=self.mode,
+                ),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"Google Drive mount health check failed: {result.output}")
 
     @staticmethod
     def _append_once(values: list[str], value: str) -> None:
@@ -197,4 +212,87 @@ def _auth_server_command(*args: str) -> str:
         "GOOGLE_DRIVE_API_BASE_URL=$GOOGLE_DRIVE_API_BASE_URL "
         "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON=$GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON "
         f"exec python3 {shlex.quote(AUTH_SERVER_PATH)}{extra_args}"
+    )
+
+
+def _auth_status_health_command(
+    *,
+    auth_container_port: int,
+    container_path: str,
+    remote_name: str,
+    mode: str,
+) -> str:
+    return (
+        "python3 - <<'PY'\n"
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "import urllib.error\n"
+        "import urllib.request\n"
+        f"url = 'http://127.0.0.1:{auth_container_port}/status'\n"
+        f"container_path = pathlib.Path({container_path!r})\n"
+        f"remote_name = {remote_name!r}\n"
+        f"mode = {mode!r}\n"
+        "deadline = time.monotonic() + 60\n"
+        "last_error = ''\n"
+        "\n"
+        "def persisted_remote_exists():\n"
+        "    config = os.environ.get('RCLONE_CONFIG')\n"
+        "    if not config:\n"
+        "        return False\n"
+        "    path = pathlib.Path(config)\n"
+        "    return path.exists() and f'[{remote_name}]' in path.read_text(encoding='utf-8')\n"
+        "\n"
+        "def fetch_status():\n"
+        "    with urllib.request.urlopen(url, timeout=2) as response:\n"
+        "        return json.loads(response.read().decode('utf-8'))\n"
+        "\n"
+        "def require_mount_health():\n"
+        "    subprocess.run(['mountpoint', '-q', str(container_path)], check=True)\n"
+        "    subprocess.run(['rclone', 'lsf', f'{remote_name}:'], check=True, capture_output=True, text=True)\n"
+        "    if mode != 'ro':\n"
+        "        probe = container_path / f'.notes-assistant-gdrive-health-{os.getpid()}'\n"
+        "        try:\n"
+        "            probe.write_text('ok', encoding='utf-8')\n"
+        "            if probe.read_text(encoding='utf-8') != 'ok':\n"
+        "                raise RuntimeError('mount write probe content mismatch')\n"
+        "        finally:\n"
+        "            try:\n"
+        "                probe.unlink()\n"
+        "            except FileNotFoundError:\n"
+        "                pass\n"
+        "\n"
+        "while time.monotonic() < deadline:\n"
+        "    try:\n"
+        "        payload = fetch_status()\n"
+        "    except urllib.error.HTTPError as error:\n"
+        "        last_error = error.read().decode('utf-8', errors='replace')\n"
+        "        time.sleep(1)\n"
+        "        continue\n"
+        "    except Exception as error:\n"
+        "        last_error = str(error)\n"
+        "        time.sleep(1)\n"
+        "        continue\n"
+        "    if payload.get('state') == 'error':\n"
+        "        raise SystemExit(f'Google Drive status is unhealthy: {payload}')\n"
+        "    if persisted_remote_exists():\n"
+        "        if payload.get('authValid') is True and payload.get('mounted') is True and payload.get('state') == 'mounted':\n"
+        "            try:\n"
+        "                require_mount_health()\n"
+        "            except Exception as error:\n"
+        "                last_error = f'Google Drive mount verification failed: {error}'\n"
+        "                time.sleep(1)\n"
+        "                continue\n"
+        "            raise SystemExit(0)\n"
+        "        last_error = f'persisted remote exists but mount is not ready: {payload}'\n"
+        "    elif isinstance(payload.get('state'), str):\n"
+        "        raise SystemExit(0)\n"
+        "    else:\n"
+        "        last_error = f'/status response has no state: {payload}'\n"
+        "    time.sleep(1)\n"
+        "raise SystemExit(f'Google Drive status did not become healthy: {last_error}')\n"
+        "PY"
     )

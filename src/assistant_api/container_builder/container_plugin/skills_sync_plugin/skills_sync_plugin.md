@@ -53,6 +53,8 @@ The startup task is a typed `ContainerStartupTask` model from `assistant_api.mod
 
 The startup task installs selected artifacts and must finish before long-running OpenCode processes start.
 
+During `post_start`, the service must verify inside the container that the target directory contains installed OpenCode artifacts.
+
 # Requirements
 - `plugin_names` must contain at least one plugin name.
 - Duplicate plugin names must fail fast.
@@ -66,6 +68,7 @@ The startup task installs selected artifacts and must finish before long-running
 - The service must fail before installation if target `.opencode/skills` already exists.
 - Selected bundle conflicts reported by the artifacts installer must fail fast.
 - The service must register artifact installation as a startup task, so artifacts are installed before long-running OpenCode processes start.
+- The service must fail fast if installed artifacts are missing after the startup task has completed.
 - The service must not back up and replace existing target artifacts.
 
 ## Sub-services

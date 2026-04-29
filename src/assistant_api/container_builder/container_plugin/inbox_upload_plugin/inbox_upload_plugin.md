@@ -56,7 +56,7 @@ Runtime-интерфейс не добавляет ничего нового, а
 
 During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, and add a managed process for the FastAPI upload HTTP server. It must not create `inbox` through a startup task. During `configure_image`, the service installs Python 3 and copies the upload handler script into the container image.
 
-During `post_start`, the service performs no host-side actions — the upload endpoint is served entirely by the container managed process.
+During `post_start`, the service must verify inside the container that the upload endpoint accepts a real multipart upload and stores the probe file in `<container_path>/inbox`. If `MountMetadata.source_type` is `remote`, the service must verify the mount is a real mountpoint before upload probing, so it cannot silently write into an unmounted local fallback directory.
 
 Upload endpoint поведение (FastAPI HTTP-сервер внутри контейнера):
 - Принимает POST-запрос с файлом в multipart/form-data (поле `file`);
@@ -73,6 +73,7 @@ Upload endpoint поведение (FastAPI HTTP-сервер внутри ко�
 - Сервис должен fail fast, если mount metadata отсутствует — не примонтирована никакая папка.
 - Сервис не должен создавать подпапку `inbox` через container startup task.
 - Подпапка `inbox` должна создаваться лениво upload handler во время обработки upload-запроса.
+- During `post_start`, the service must fail fast if the upload endpoint or required mount source is not healthy inside the container.
 - Upload endpoint должен работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.
@@ -81,7 +82,7 @@ Upload endpoint поведение (FastAPI HTTP-сервер внутри ко�
 - Endpoint должен возвращать абсолютный путь к файлу внутри контейнера после успешной загрузки.
 - Endpoint должен отклонять имена файлов с path traversal (`../`) или абсолютные пути (`/etc/...`) — HTTP 400.
 - Сервис не должен иметь ограничений на размер загружаемого файла.
-- Сервис должен работать с любым источником mount (local, Google Drive, и др.) — `MountMetadata.source_type` не влияет на поведение.
+- Сервис должен работать с любым healthy источником mount (local, Google Drive, и др.).
 - Upload handler должен быть написан на Python с использованием FastAPI.
 
 ## Sub-services

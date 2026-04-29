@@ -54,6 +54,8 @@ class GoogleDrivePersistencePluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
+During `post_start`, the service must verify inside the container that the configured rclone config and cache directories exist and are writable.
+
 # Persistence model
 The persisted rclone config contains Google OAuth tokens, including refresh tokens when Google returns them. This volume is secret-bearing state.
 
@@ -72,6 +74,7 @@ The persisted rclone cache volume stores rclone VFS/cache files. It must not be 
 - The default cache volume must mount to `/tmp/google-drive-persistence/rclone-cache`.
 - The service must set `RCLONE_CONFIG` to `/tmp/google-drive-persistence/rclone-config/rclone.conf` by default.
 - The service must set `RCLONE_CACHE_DIR` to `/tmp/google-drive-persistence/rclone-cache` by default.
+- The service must fail fast if the configured rclone config or cache directory is not writable inside the container.
 - The service must not set `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, or `XDG_CACHE_HOME`, so it does not conflict with other persistence plugins.
 - The service must not start Google Drive auth web server.
 - The service must not perform Google OAuth.

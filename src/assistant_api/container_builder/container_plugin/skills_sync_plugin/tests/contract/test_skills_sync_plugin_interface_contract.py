@@ -7,6 +7,7 @@ import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
+from assistant_api.models import ContainerRuntimeContext
 from skills_sync_contract_helpers import (
     DEFAULT_REPO_REF,
     DEFAULT_REPO_URL,
@@ -88,3 +89,59 @@ def test_configure_image_installs_startup_task_runtime_dependencies(tmp_path: Pa
     run_commands = "\n".join(image_spec.run_commands)
     assert "git" in run_commands
     assert "python3" in run_commands
+
+
+def test_post_start_checks_installed_artifacts(tmp_path: Path) -> None:
+    plugin = service_class()(["yid-notes-assistant"])
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[WorkingDirPlugin(tmp_path), plugin]
+    )._prepare_specs()
+    container = _RecordingContainer(exit_code=0)
+
+    plugin.post_start(
+        ContainerRuntimeContext(
+            docker_client=object(),
+            container=container,
+            state=container_spec.state,
+        )
+    )
+
+    assert container.commands
+    assert "AGENTS.md" in container.commands[0][2]
+    assert ".opencode" in container.commands[0][2]
+
+
+def test_post_start_fails_when_installed_artifacts_are_missing(tmp_path: Path) -> None:
+    plugin = service_class()(["yid-notes-assistant"])
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[WorkingDirPlugin(tmp_path), plugin]
+    )._prepare_specs()
+
+    with pytest.raises(RuntimeError, match="skills sync health check failed"):
+        plugin.post_start(
+            ContainerRuntimeContext(
+                docker_client=object(),
+                container=_RecordingContainer(exit_code=1, output="missing artifacts"),
+                state=container_spec.state,
+            )
+        )
+
+
+class _RecordingContainer:
+    def __init__(self, exit_code: int, output: str = "") -> None:
+        self.exit_code = exit_code
+        self.output = output
+        self.commands: list[list[str]] = []
+
+    def exec_run(self, command: list[str]) -> object:
+        self.commands.append(command)
+        exit_code = self.exit_code
+        output = self.output.encode("utf-8")
+
+        class Result:
+            pass
+
+        result = Result()
+        result.exit_code = exit_code
+        result.output = output
+        return result

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import PurePosixPath
 
 from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec, VolumeMount
@@ -38,4 +39,30 @@ class GoogleDrivePersistencePluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _persistence_health_command(str(self.config_dir), str(self.cache_dir)),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"Google Drive persistence health check failed: {result.output}")
+
+
+def _persistence_health_command(config_dir: str, cache_dir: str) -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            f"config_dir={shlex.quote(config_dir)}",
+            f"cache_dir={shlex.quote(cache_dir)}",
+            'test -d "$config_dir"',
+            'test -d "$cache_dir"',
+            'for target in "$config_dir" "$cache_dir"; do',
+            '  probe="$target/.notes-assistant-persistence-health-$$"',
+            '  printf "%s" ok > "$probe"',
+            '  test "$(cat "$probe")" = ok',
+            '  rm -f "$probe"',
+            "done",
+        ]
+    )

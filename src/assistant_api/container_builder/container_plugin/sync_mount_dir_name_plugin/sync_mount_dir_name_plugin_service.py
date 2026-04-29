@@ -51,7 +51,10 @@ class SyncMountDirNamePluginService:
         command = (
             f"mkdir -p {shlex.quote(str(self.working_dir))} "
             f"&& rm -f {shlex.quote(str(link_path))} "
-            f"&& ln -sfn {shlex.quote(str(self.mounted_source))} {shlex.quote(str(link_path))}"
+            f"&& ln -sfn {shlex.quote(str(self.mounted_source))} {shlex.quote(str(link_path))} "
+            f"&& test -d {shlex.quote(str(self.mounted_source))} "
+            f"&& test -L {shlex.quote(str(link_path))} "
+            f"&& test \"$(readlink {shlex.quote(str(link_path))})\" = {shlex.quote(str(self.mounted_source))}"
         )
         result = runtime.exec(["/bin/sh", "-lc", command])
         if result.exit_code != 0:

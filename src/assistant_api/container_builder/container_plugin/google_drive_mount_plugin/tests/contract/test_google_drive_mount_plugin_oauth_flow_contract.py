@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from importlib import resources
 from pathlib import Path, PurePosixPath
 
@@ -144,6 +145,15 @@ def test_oauth_callback_creates_folder_configures_rclone_and_reports_mounted(
         folder_id=oauth_drive_stub.state.created_folder_id,
         container_path=container_path,
     )
+    config_command = next(
+        command
+        for command in fake_rclone.commands()
+        if command[:3] == ["config", "create", "gdrive"]
+    )
+    rclone_token = json.loads(config_command[config_command.index("token") + 1])
+    assert "expiry" in rclone_token
+    assert "expires_in" not in rclone_token
+    assert rclone_token["refresh_token"] == "refresh-token"
     authorize_request_count = len(oauth_drive_stub.state.authorize_queries)
     logged_in_page = read_url(service_url(host_port, "/login"))
     assert logged_in_page.status == 200

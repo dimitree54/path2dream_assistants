@@ -4,6 +4,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -79,6 +80,16 @@ class FakeContainer:
 
     def exec_run(self, command: list[str]) -> object:
         self.commands.append(command)
+        if command[:2] == ["/bin/sh", "-lc"]:
+            result = subprocess.run(command, check=False, capture_output=True, text=True)
+
+            class ShellResult:
+                pass
+
+            shell_result = ShellResult()
+            shell_result.exit_code = result.returncode
+            shell_result.output = (result.stdout + result.stderr).encode("utf-8")
+            return shell_result
 
         class Result:
             exit_code = 0
@@ -190,7 +201,6 @@ def start_plugin(plugin: object, state: dict[str, object] | None = None) -> Cont
         container=FakeContainer(),
         state=state or {},
     )
-    plugin.post_start(runtime)
     server = OpenAIProviderAuthServer(
         opencode_api_port=plugin.opencode_api_port,
         auth_port=plugin.auth_container_port,
@@ -198,6 +208,7 @@ def start_plugin(plugin: object, state: dict[str, object] | None = None) -> Cont
     )
     server.start_in_thread("127.0.0.1")
     _started_auth_servers.append(server)
+    plugin.post_start(runtime)
     return runtime
 
 

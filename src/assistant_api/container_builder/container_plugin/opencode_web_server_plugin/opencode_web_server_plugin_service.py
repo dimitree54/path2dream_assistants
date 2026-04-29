@@ -35,4 +35,36 @@ class OpenCodeWebServerPluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _opencode_health_command(self.container_port),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"OpenCode web health check failed: {result.output}")
+
+
+def _opencode_health_command(container_port: int) -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            "attempts=0",
+            "while true; do",
+            (
+                "  if wget -qO- "
+                f"http://127.0.0.1:{container_port}/global/health "
+                "| grep -q '\"healthy\"[[:space:]]*:[[:space:]]*true'; then"
+            ),
+            "    exit 0",
+            "  fi",
+            "  attempts=$((attempts + 1))",
+            "  if [ \"$attempts\" -ge 120 ]; then",
+            "    printf '%s\\n' 'OpenCode web did not become healthy' >&2",
+            "    exit 1",
+            "  fi",
+            "  sleep 1",
+            "done",
+        ]
+    )

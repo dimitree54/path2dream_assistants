@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from assistant_api.models import ContainerSpec, ImageSpec, VolumeMount
+from assistant_api.models import ContainerSpec, ContainerStartupTask, ImageSpec, VolumeMount
 
 from ._dockerfile import render_dockerfile
 
 
 DEFAULT_COMMAND = ["sleep", "infinity"]
+STARTUP_TASK_STATUS_DIR = "/tmp/notes-assistant/startup-tasks"
 
 
 @dataclass(slots=True)
@@ -63,9 +64,104 @@ def container_command(container_spec: ContainerSpec) -> list[str]:
     if not container_spec.startup_tasks:
         return command
 
-    shell_parts = [shlex.join(task.command) for task in container_spec.startup_tasks]
+    shell_parts = [
+        _startup_task_command(index, task)
+        for index, task in enumerate(container_spec.startup_tasks)
+    ]
     shell_parts.append("exec " + shlex.join(command))
-    return ["/bin/sh", "-lc", " && ".join(shell_parts)]
+    return ["/bin/sh", "-lc", "set -eu\n" + "\n".join(shell_parts)]
+
+
+def startup_task_status_path(index: int, task: ContainerStartupTask) -> str:
+    return (
+        f"{STARTUP_TASK_STATUS_DIR}/"
+        f"{index:03d}-{_safe_task_token(task.owner_plugin_name or 'unknown')}-"
+        f"{_safe_task_token(task.name)}.status"
+    )
+
+
+def startup_task_log_path(index: int, task: ContainerStartupTask) -> str:
+    return startup_task_status_path(index, task) + ".log"
+
+
+def _startup_task_command(index: int, task: ContainerStartupTask) -> str:
+    marker_path = startup_task_status_path(index, task)
+    log_path = startup_task_log_path(index, task)
+    owner = task.owner_plugin_name or "unknown"
+    return "\n".join(
+        [
+            f"mkdir -p {shlex.quote(STARTUP_TASK_STATUS_DIR)}",
+            _write_startup_status(marker_path, "running", owner, task.name, ""),
+            "set +e",
+            f"( {shlex.join(task.command)} ) > {shlex.quote(log_path)} 2>&1",
+            "task_status=$?",
+            "set -e",
+            'if [ "$task_status" -eq 0 ]; then',
+            "  "
+            + _write_startup_status(
+                marker_path,
+                "succeeded",
+                owner,
+                task.name,
+                "$task_status",
+                expand_exit_code=True,
+            ),
+            "else",
+            "  "
+            + _write_startup_status(
+                marker_path,
+                "failed",
+                owner,
+                task.name,
+                "$task_status",
+                expand_exit_code=True,
+            ),
+            "  "
+            + (
+                "printf '%s\\n' "
+                + shlex.quote(
+                    f"Startup task failed: plugin={owner} task={task.name}"
+                )
+                + " >&2"
+            ),
+            f"  tail -c 4000 {shlex.quote(log_path)} >&2 || true",
+            '  exit "$task_status"',
+            "fi",
+        ]
+    )
+
+
+def _write_startup_status(
+    marker_path: str,
+    status: str,
+    owner: str,
+    task_name: str,
+    exit_code: str,
+    *,
+    expand_exit_code: bool = False,
+) -> str:
+    lines = [
+        f"status={status}",
+        f"owner={owner}",
+        f"name={task_name}",
+    ]
+    if expand_exit_code:
+        arguments = " ".join(shlex.quote(line) for line in lines)
+        return (
+            "printf '%s\\n' "
+            f"{arguments} \"exit_code={exit_code}\" > {shlex.quote(marker_path)}"
+        )
+    lines.append(f"exit_code={exit_code}")
+    arguments = " ".join(shlex.quote(line) for line in lines)
+    return f"printf '%s\\n' {arguments} > {shlex.quote(marker_path)}"
+
+
+def _safe_task_token(value: str) -> str:
+    token = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_"
+        for char in value
+    )
+    return token or "unnamed"
 
 
 def _managed_process_command(commands: list[list[str]]) -> str:

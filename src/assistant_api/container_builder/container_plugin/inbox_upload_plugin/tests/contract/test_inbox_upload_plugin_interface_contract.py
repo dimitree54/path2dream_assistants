@@ -497,6 +497,8 @@ def test_post_start_does_not_start_host_side_server() -> None:
     )
     # Should not raise and should not start host-side listeners
     plugin.post_start(runtime)
+    assert runtime.container.commands
+    assert "/api/inbox/upload" in runtime.container.commands[0][2]
 
 
 def test_post_start_does_not_modify_state() -> None:
@@ -516,6 +518,45 @@ def test_post_start_does_not_modify_state() -> None:
     plugin.post_start(runtime)
 
     assert set(container_spec.state.keys()) == state_before
+
+
+def test_post_start_checks_remote_mount_before_upload_probe() -> None:
+    plugin = service_class()(host_port=unused_port())
+    metadata = mount_metadata(source_type="remote", remote_name="gdrive")
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[_MountStatePlugin(metadata), plugin]
+    )._prepare_specs()
+
+    container = FakeContainer()
+    plugin.post_start(
+        ContainerRuntimeContext(
+            docker_client=object(),
+            container=container,
+            state=container_spec.state,
+        )
+    )
+
+    assert "mountpoint" in container.commands[0][2]
+    assert "rclone" in container.commands[0][2]
+
+
+def test_post_start_fails_when_upload_probe_fails() -> None:
+    plugin = service_class()(host_port=unused_port())
+    metadata = mount_metadata()
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[_MountStatePlugin(metadata), plugin]
+    )._prepare_specs()
+
+    with pytest.raises(RuntimeError, match="inbox upload health check failed"):
+        plugin.post_start(
+            ContainerRuntimeContext(
+                docker_client=object(),
+                container=FakeContainer(exit_code=1, output="endpoint down"),
+                state=container_spec.state,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

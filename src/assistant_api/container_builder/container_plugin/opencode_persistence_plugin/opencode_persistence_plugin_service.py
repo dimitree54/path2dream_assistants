@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import PurePosixPath
 
 from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec, VolumeMount
@@ -43,4 +44,36 @@ class OpenCodePersistencePluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _persistence_health_command(
+                    str(self.home),
+                    str(self.home / ".config" / "opencode"),
+                    str(self.home / ".local/share" / "opencode"),
+                ),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"OpenCode persistence health check failed: {result.output}")
+
+
+def _persistence_health_command(home: str, config_dir: str, data_dir: str) -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            f"home={shlex.quote(home)}",
+            f"config_dir={shlex.quote(config_dir)}",
+            f"data_dir={shlex.quote(data_dir)}",
+            'test -d "$home"',
+            'test -d "$config_dir"',
+            'test -d "$data_dir"',
+            'for target in "$config_dir" "$data_dir"; do',
+            '  probe="$target/.notes-assistant-persistence-health-$$"',
+            '  printf "%s" ok > "$probe"',
+            '  test "$(cat "$probe")" = ok',
+            '  rm -f "$probe"',
+            "done",
+        ]
+    )

@@ -45,14 +45,20 @@ def mount_metadata(
 
 
 class FakeContainer:
-    def __init__(self) -> None:
+    def __init__(self, exit_code: int = 0, output: str = "") -> None:
+        self.exit_code = exit_code
+        self.output = output
         self.commands: list[list[str]] = []
 
     def exec_run(self, command: list[str]) -> object:
         self.commands.append(command)
+        exit_code = self.exit_code
+        output = self.output.encode("utf-8")
 
         class Result:
-            exit_code = 0
-            output = b""
+            pass
 
-        return Result()
+        result = Result()
+        result.exit_code = exit_code
+        result.output = output
+        return result

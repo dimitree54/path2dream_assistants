@@ -3,18 +3,31 @@ from __future__ import annotations
 import inspect
 from pathlib import PurePosixPath
 
+import pytest
+
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.models import ContainerRuntimeContext
 from google_drive_persistence_contract_helpers import persistence_service_class
 
 
 class RecordingContainer:
-    def __init__(self) -> None:
+    def __init__(self, exit_code: int = 0, output: str = "") -> None:
+        self.exit_code = exit_code
+        self.output = output
         self.commands: list[list[str]] = []
 
     def exec_run(self, command: list[str]) -> object:
         self.commands.append(command)
-        raise AssertionError(f"persistence plugin must not execute runtime command: {command!r}")
+        exit_code = self.exit_code
+        output = self.output.encode("utf-8")
+
+        class Result:
+            pass
+
+        result = Result()
+        result.exit_code = exit_code
+        result.output = output
+        return result
 
 
 def test_public_service_import_and_init_signature_defaults() -> None:
@@ -91,7 +104,24 @@ def test_plugin_does_not_claim_unrelated_persistence_or_runtime_responsibilities
         state=container_spec.state,
     )
     persistence_service_class()().post_start(runtime)
-    assert recording_container.commands == []
+    assert recording_container.commands
+    assert "rclone-config" in recording_container.commands[0][2]
+    assert "rclone-cache" in recording_container.commands[0][2]
+
+
+def test_post_start_fails_when_persisted_state_dirs_are_unhealthy() -> None:
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[persistence_service_class()()]
+    )._prepare_specs()
+
+    with pytest.raises(RuntimeError, match="Google Drive persistence health check failed"):
+        persistence_service_class()().post_start(
+            ContainerRuntimeContext(
+                docker_client=object(),
+                container=RecordingContainer(exit_code=1, output="read only"),
+                state=container_spec.state,
+            )
+        )
 
 
 def test_custom_volume_names_and_paths_are_used_exactly() -> None:

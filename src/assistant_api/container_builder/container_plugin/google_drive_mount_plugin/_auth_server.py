@@ -9,6 +9,7 @@ import sys
 import argparse
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -135,7 +136,7 @@ class GoogleDriveMountAuthServer:
             self._state = "mounting"
             self._configure_rclone(folder_id)
             self._mount_rclone()
-            self._verify_mountpoint()
+            self._verify_mount_health()
         except Exception as error:
             self._set_error(str(error))
             return 500, "text/plain; charset=utf-8", self._message
@@ -263,7 +264,7 @@ class GoogleDriveMountAuthServer:
                 "scope",
                 RCLONE_DRIVE_FILE_SCOPE,
                 "token",
-                json.dumps(self._token),
+                json.dumps(_rclone_token_from_oauth_token(self._token)),
                 "root_folder_id",
                 folder_id,
                 "--non-interactive",
@@ -311,6 +312,24 @@ class GoogleDriveMountAuthServer:
     def _verify_mountpoint(self) -> None:
         self._exec_checked(["mountpoint", "-q", str(self.container_path)], "mountpoint verification failed")
 
+    def _verify_remote_readable(self) -> None:
+        try:
+            self._exec_checked(
+                ["rclone", "lsf", f"{self.remote_name}:"],
+                "Google Drive remote read verification failed",
+            )
+        except GoogleDriveMountAuthError as error:
+            if not self._force_refresh_persisted_rclone_token(str(error)):
+                raise
+            self._exec_checked(
+                ["rclone", "lsf", f"{self.remote_name}:"],
+                "Google Drive remote read verification failed after token refresh",
+            )
+
+    def _verify_mount_health(self) -> None:
+        self._verify_mountpoint()
+        self._verify_remote_readable()
+
     def _restore_persisted_mount(self) -> None:
         config = os.environ.get("RCLONE_CONFIG")
         if not config:
@@ -320,9 +339,11 @@ class GoogleDriveMountAuthServer:
             raise GoogleDriveMountAuthError("persisted rclone config path parent is not a directory")
         if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
             return
+        self._normalize_persisted_rclone_token(config_path)
         self._state = "mounting"
+        self._verify_remote_readable()
         self._mount_rclone()
-        self._verify_mountpoint()
+        self._verify_mount_health()
         self._auth_valid = True
         self._mounted = True
         self._state = "mounted"
@@ -337,6 +358,7 @@ class GoogleDriveMountAuthServer:
             raise GoogleDriveMountAuthError("persisted rclone config path parent is not a directory")
         if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
             return
+        self._normalize_persisted_rclone_token(config_path)
         result = subprocess.run(
             ["mountpoint", "-q", str(self.container_path)],
             check=False,
@@ -345,10 +367,38 @@ class GoogleDriveMountAuthServer:
         )
         if result.returncode != 0:
             return
+        try:
+            self._verify_mount_health()
+        except GoogleDriveMountAuthError as error:
+            self._set_error(str(error))
+            return
         self._auth_valid = True
         self._mounted = True
         self._state = "mounted"
         self._message = "Google Drive is mounted."
+
+    def _normalize_persisted_rclone_token(self, config_path: Path) -> None:
+        config_text = config_path.read_text(encoding="utf-8")
+        normalized = _normalize_rclone_config_token(config_text, self.remote_name)
+        if normalized != config_text:
+            config_path.write_text(normalized, encoding="utf-8")
+
+    def _force_refresh_persisted_rclone_token(self, error_message: str) -> bool:
+        if "Invalid Credentials" not in error_message:
+            return False
+        config_path = _rclone_config_path()
+        if config_path is None or not config_path.exists():
+            return False
+        config_text = config_path.read_text(encoding="utf-8")
+        normalized = _normalize_rclone_config_token(
+            config_text,
+            self.remote_name,
+            force_expired=True,
+        )
+        if normalized == config_text:
+            return False
+        config_path.write_text(normalized, encoding="utf-8")
+        return True
 
     def _exec_checked(self, command: list[str], message: str) -> None:
         result = subprocess.run(command, check=False, capture_output=True, text=True)
@@ -380,6 +430,108 @@ def _credentials_from_json(raw: str) -> OAuthCredentials:
     if not isinstance(client_secret, str) or not client_secret:
         raise GoogleDriveMountAuthError("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON must contain web.client_secret")
     return OAuthCredentials(client_id=client_id, client_secret=client_secret)
+
+
+def _rclone_token_from_oauth_token(token: dict[str, Any] | None) -> dict[str, Any]:
+    if token is None:
+        raise GoogleDriveMountAuthError("OAuth token has not been initialized.")
+    access_token = token.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise GoogleDriveMountAuthError("OAuth token response did not include access_token.")
+    rclone_token: dict[str, Any] = {"access_token": access_token}
+    token_type = token.get("token_type")
+    if isinstance(token_type, str) and token_type:
+        rclone_token["token_type"] = token_type
+    refresh_token = token.get("refresh_token")
+    if isinstance(refresh_token, str) and refresh_token:
+        rclone_token["refresh_token"] = refresh_token
+    expiry = token.get("expiry")
+    if isinstance(expiry, str) and expiry:
+        rclone_token["expiry"] = expiry
+        return rclone_token
+    expires_in = token.get("expires_in")
+    if isinstance(expires_in, (int, float)):
+        rclone_token["expiry"] = _rclone_expiry_timestamp(expires_in)
+    else:
+        rclone_token["expiry"] = _expired_rclone_token_timestamp()
+    return rclone_token
+
+
+def _normalize_rclone_config_token(
+    config_text: str,
+    remote_name: str,
+    *,
+    force_expired: bool = False,
+) -> str:
+    lines = config_text.splitlines()
+    output: list[str] = []
+    in_remote = False
+    changed = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_remote = stripped == f"[{remote_name}]"
+            output.append(line)
+            continue
+        if in_remote and stripped.startswith("token = "):
+            prefix, raw_token = line.split("=", 1)
+            token = json.loads(raw_token.strip())
+            if not isinstance(token, dict):
+                raise GoogleDriveMountAuthError("persisted rclone token is not a JSON object")
+            normalized_token = _rclone_token_from_persisted_token(
+                token,
+                force_expired=force_expired,
+            )
+            if normalized_token != token:
+                changed = True
+                output.append(f"{prefix}= {json.dumps(normalized_token)}")
+                continue
+        output.append(line)
+    trailing_newline = "\n" if config_text.endswith("\n") else ""
+    normalized = "\n".join(output) + trailing_newline
+    return normalized if changed else config_text
+
+
+def _rclone_expiry_timestamp(expires_in_seconds: int | float) -> str:
+    seconds = max(float(expires_in_seconds) - 60, 0)
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return expiry.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _expired_rclone_token_timestamp() -> str:
+    return "1970-01-01T00:00:00Z"
+
+
+def _rclone_token_from_persisted_token(
+    token: dict[str, Any],
+    *,
+    force_expired: bool = False,
+) -> dict[str, Any]:
+    access_token = token.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise GoogleDriveMountAuthError("persisted rclone token did not include access_token")
+    rclone_token: dict[str, Any] = {"access_token": access_token}
+    token_type = token.get("token_type")
+    if isinstance(token_type, str) and token_type:
+        rclone_token["token_type"] = token_type
+    refresh_token = token.get("refresh_token")
+    if isinstance(refresh_token, str) and refresh_token:
+        rclone_token["refresh_token"] = refresh_token
+    expiry = token.get("expiry")
+    if force_expired:
+        rclone_token["expiry"] = _expired_rclone_token_timestamp()
+    elif isinstance(expiry, str) and expiry:
+        rclone_token["expiry"] = expiry
+    else:
+        rclone_token["expiry"] = _expired_rclone_token_timestamp()
+    return rclone_token
+
+
+def _rclone_config_path() -> Path | None:
+    config = os.environ.get("RCLONE_CONFIG")
+    if not config:
+        return None
+    return Path(config)
 
 
 def _required_env(name: str) -> str:

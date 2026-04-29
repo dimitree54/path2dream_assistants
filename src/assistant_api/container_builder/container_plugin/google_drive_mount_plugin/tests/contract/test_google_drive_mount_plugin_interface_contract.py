@@ -258,10 +258,54 @@ def test_post_start_does_not_start_host_side_auth_server(
 
     monkeypatch.setattr(service_module, "ThreadingHTTPServer", fail_host_start, raising=False)
 
+    container = _SuccessfulExecContainer()
     plugin.post_start(
         ContainerRuntimeContext(
             docker_client=object(),
-            container=object(),
+            container=container,
             state=container_spec.state,
         )
     )
+
+    assert container.commands
+    assert "/status" in container.commands[0][2]
+
+
+def test_post_start_fails_when_google_drive_status_is_unhealthy(
+    google_env: str,
+) -> None:
+    plugin = service_class()(
+        host_port=auth_port(),
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    with pytest.raises(RuntimeError, match="Google Drive mount health check failed"):
+        plugin.post_start(
+            ContainerRuntimeContext(
+                docker_client=object(),
+                container=_SuccessfulExecContainer(exit_code=1, output="status error"),
+                state=container_spec.state,
+            )
+        )
+
+
+class _SuccessfulExecContainer:
+    def __init__(self, exit_code: int = 0, output: str = "") -> None:
+        self.exit_code = exit_code
+        self.output = output
+        self.commands: list[list[str]] = []
+
+    def exec_run(self, command: list[str]) -> object:
+        self.commands.append(command)
+        exit_code = self.exit_code
+        output = self.output.encode("utf-8")
+
+        class Result:
+            pass
+
+        result = Result()
+        result.exit_code = exit_code
+        result.output = output
+        return result

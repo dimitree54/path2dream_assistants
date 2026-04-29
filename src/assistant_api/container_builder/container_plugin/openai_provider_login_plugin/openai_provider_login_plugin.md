@@ -59,6 +59,8 @@ Auth service обращается к OpenCode только внутри containe
 
 If OpenCode runtime state is missing, configuration must fail fast.
 
+During `post_start`, the service must wait until its container-local `/status` endpoint is reachable and reports a non-error state. If `/status` reports `error` or `unavailable`, the hook must fail fast.
+
 Published endpoints:
 - `GET /login`;
 - `GET /status`.
@@ -103,9 +105,11 @@ OpenCode provider endpoints used by this service:
 - Missing OpenCode server availability at startup must lead to fail fast.
 - Missing OpenAI provider in OpenCode `/provider` response must lead to fail fast.
 - Missing headless OAuth method for OpenAI in OpenCode `/provider/auth` response must lead to fail fast.
+- The service must fail fast if its container-local `/status` endpoint does not become healthy after the managed auth process starts.
 - The service must not fall back to redirect OAuth or API key auth when headless OAuth is unavailable.
 - Successful auth must be visible through `/status`.
 - When `/status` reports successful OpenAI auth, `/login` must keep the success status card visible and hide the full device-code card and OpenAI authorization button.
+- Manual live integration coverage for this service must include a real `opencode serve` container run composed with `OpenCodePersistencePluginService` default volumes and must verify that OpenAI auth remains valid after container recreation.
 - The service must fail fast on invalid init-time configuration.
 - The service must not configure OpenCode persistence.
 - The service must not overwrite the OpenCode long-running process.

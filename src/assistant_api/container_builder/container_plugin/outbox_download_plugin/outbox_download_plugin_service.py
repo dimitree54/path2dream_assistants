@@ -37,6 +37,7 @@ class OutboxDownloadPluginService:
         self.download_endpoint_path = self._validate_endpoint_path(
             "download_endpoint_path", download_endpoint_path
         )
+        self._container_path: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
         image.run_commands.append("apk add --no-cache python3 py3-pip")
@@ -48,6 +49,7 @@ class OutboxDownloadPluginService:
     def configure_container(self, container: ContainerSpec) -> None:
         mount = self._mount_metadata(container.state)
         container_path = str(mount.container_path)
+        self._container_path = container_path
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="outbox-download-server",
@@ -66,7 +68,24 @@ class OutboxDownloadPluginService:
         container.ports[self.container_port] = self.host_port
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        mount = self._mount_metadata(runtime.state)
+        container_path = self._container_path or str(mount.container_path)
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _outbox_health_command(
+                    container_path=container_path,
+                    container_port=self.container_port,
+                    list_endpoint_path=self.list_endpoint_path,
+                    download_endpoint_path=self.download_endpoint_path,
+                    source_type=mount.source_type,
+                    remote_name=mount.remote_name,
+                ),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"outbox download health check failed: {result.output}")
 
     @staticmethod
     def _validate_port(name: str, value: int) -> int:
@@ -139,4 +158,71 @@ def _outbox_server_command(
         f"OUTBOX_DOWNLOAD_ENDPOINT_PATH={download_endpoint_path!r} "
         f"OUTBOX_PORT={container_port} "
         f"exec python3 {OUTBOX_HANDLER_PATH}"
+    )
+
+
+def _outbox_health_command(
+    *,
+    container_path: str,
+    container_port: int,
+    list_endpoint_path: str,
+    download_endpoint_path: str,
+    source_type: str,
+    remote_name: str | None,
+) -> str:
+    return (
+        "python3 - <<'PY'\n"
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import subprocess\n"
+        "import time\n"
+        "import urllib.error\n"
+        "import urllib.parse\n"
+        "import urllib.request\n"
+        f"container_path = pathlib.Path({container_path!r})\n"
+        f"list_url = 'http://127.0.0.1:{container_port}{list_endpoint_path}'\n"
+        f"download_base_url = 'http://127.0.0.1:{container_port}{download_endpoint_path}'\n"
+        f"source_type = {source_type!r}\n"
+        f"remote_name = {remote_name!r}\n"
+        "filename = f'.notes-assistant-outbox-health-{os.getpid()}.txt'\n"
+        "content = b'ok'\n"
+        "outbox_dir = container_path / 'outbox'\n"
+        "deadline = time.monotonic() + 60\n"
+        "last_error = ''\n"
+        "while time.monotonic() < deadline:\n"
+        "    try:\n"
+        "        if source_type == 'remote':\n"
+        "            subprocess.run(['mountpoint', '-q', str(container_path)], check=True)\n"
+        "            if remote_name:\n"
+        "                subprocess.run(['rclone', 'lsf', f'{remote_name}:'], check=True, capture_output=True, text=True)\n"
+        "        outbox_dir.mkdir(parents=True, exist_ok=True)\n"
+        "        probe = outbox_dir / filename\n"
+        "        probe.write_bytes(content)\n"
+        "        with urllib.request.urlopen(list_url, timeout=2) as response:\n"
+        "            listed = json.loads(response.read().decode('utf-8'))\n"
+        "        if filename not in listed:\n"
+        "            raise RuntimeError(f'probe file missing from list endpoint: {listed}')\n"
+        "        download_url = download_base_url + '/' + urllib.parse.quote(filename, safe='')\n"
+        "        with urllib.request.urlopen(download_url, timeout=2) as response:\n"
+        "            downloaded = response.read()\n"
+        "        if downloaded != content:\n"
+        "            raise RuntimeError('downloaded probe content mismatch')\n"
+        "        delete_deadline = time.monotonic() + 15\n"
+        "        while probe.exists() and time.monotonic() < delete_deadline:\n"
+        "            time.sleep(0.2)\n"
+        "        if probe.exists():\n"
+        "            raise RuntimeError('download endpoint did not remove probe file')\n"
+        "        raise SystemExit(0)\n"
+        "    except urllib.error.HTTPError as error:\n"
+        "        last_error = error.read().decode('utf-8', errors='replace')\n"
+        "    except Exception as error:\n"
+        "        last_error = str(error)\n"
+        "        try:\n"
+        "            (outbox_dir / filename).unlink()\n"
+        "        except FileNotFoundError:\n"
+        "            pass\n"
+        "    time.sleep(1)\n"
+        "raise SystemExit(f'outbox download endpoint did not become healthy: {last_error}')\n"
+        "PY"
     )

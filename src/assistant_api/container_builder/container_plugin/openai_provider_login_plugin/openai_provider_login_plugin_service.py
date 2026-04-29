@@ -69,7 +69,15 @@ class OpenAIProviderLoginPluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _auth_status_health_command(self.auth_container_port),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"OpenAI provider login health check failed: {result.output}")
 
     @staticmethod
     def _validate_port(name: str, value: int) -> int:
@@ -150,4 +158,43 @@ def _auth_server_command() -> str:
         "OPENAI_AUTH_PORT=$OPENAI_AUTH_PORT "
         "OPENCODE_MODEL=$OPENCODE_MODEL "
         f"exec python3 {AUTH_SERVER_PATH}"
+    )
+
+
+def _auth_status_health_command(auth_container_port: int) -> str:
+    return (
+        "python3 - <<'PY'\n"
+        "import json\n"
+        "import sys\n"
+        "import time\n"
+        "import urllib.error\n"
+        "import urllib.request\n"
+        f"url = 'http://127.0.0.1:{auth_container_port}/status'\n"
+        "deadline = time.monotonic() + 60\n"
+        "last_error = ''\n"
+        "while time.monotonic() < deadline:\n"
+        "    try:\n"
+        "        with urllib.request.urlopen(url, timeout=2) as response:\n"
+        "            body = response.read().decode('utf-8')\n"
+        "    except urllib.error.HTTPError as error:\n"
+        "        body = error.read().decode('utf-8', errors='replace')\n"
+        "    except Exception as error:\n"
+        "        last_error = str(error)\n"
+        "        time.sleep(1)\n"
+        "        continue\n"
+        "    try:\n"
+        "        payload = json.loads(body)\n"
+        "    except Exception as error:\n"
+        "        last_error = f'invalid JSON from /status: {error}: {body}'\n"
+        "        time.sleep(1)\n"
+        "        continue\n"
+        "    state = payload.get('state')\n"
+        "    if state in {'error', 'unavailable'}:\n"
+        "        raise SystemExit(f'OpenAI provider status is unhealthy: {payload}')\n"
+        "    if isinstance(state, str):\n"
+        "        raise SystemExit(0)\n"
+        "    last_error = f'/status response has no state: {payload}'\n"
+        "    time.sleep(1)\n"
+        "raise SystemExit(f'OpenAI provider status did not become healthy: {last_error}')\n"
+        "PY"
     )

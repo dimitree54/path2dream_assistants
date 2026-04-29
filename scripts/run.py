@@ -56,15 +56,15 @@ def create_builder() -> ContainerBuilderService:
     outbox_port = 8091
     return ContainerBuilderService(
         plugins=[
+            OpenCodePersistencePluginService(),
             OpenCodeServerPluginService(host_port=host_port),
             OpenAIProviderLoginPluginService(host_port=openai_auth_port),
-            OpenCodePersistencePluginService(),
             GoogleDrivePersistencePluginService(),
             GoogleDriveMountPluginService(
                 host_port=google_drive_auth_port,
                 drive_folder_name="notes",
             ),
-            SkillsSyncPluginService(["yid-notes-assistant", "path2dream-doppler-env"]),
+            SkillsSyncPluginService(["yid-notes-assistant"]),
             InboxUploadPluginService(host_port=inbox_port),
             OutboxDownloadPluginService(host_port=outbox_port),
         ]

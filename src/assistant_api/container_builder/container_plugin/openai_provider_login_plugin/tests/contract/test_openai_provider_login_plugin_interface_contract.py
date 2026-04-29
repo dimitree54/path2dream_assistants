@@ -8,6 +8,12 @@ import pytest
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
+from assistant_api.container_builder.container_plugin.opencode_persistence_plugin import (
+    OpenCodePersistencePluginService,
+)
+from assistant_api.container_builder.container_plugin.opencode_server_plugin import (
+    OpenCodeServerPluginService,
+)
 from assistant_api.models import ContainerRuntimeContext, ContainerSpec, OpenCodeRuntimeMetadata
 from openai_provider_login_contract_helpers import (
     OpenCodeRuntimeStatePlugin,
@@ -215,13 +221,38 @@ def test_post_start_does_not_start_host_side_auth_server(
 
     monkeypatch.setattr(OpenAIProviderAuthServer, "start_in_thread", fail_host_start)
 
+    container = _SuccessfulExecContainer()
     plugin.post_start(
         ContainerRuntimeContext(
             docker_client=object(),
-            container=object(),
+            container=container,
             state=container_spec.state,
         )
     )
+
+    assert container.commands
+    assert "/status" in container.commands[0][2]
+
+
+def test_post_start_fails_when_openai_auth_status_is_unhealthy(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+
+    with pytest.raises(RuntimeError, match="OpenAI provider login health check failed"):
+        plugin.post_start(
+            ContainerRuntimeContext(
+                docker_client=object(),
+                container=_SuccessfulExecContainer(exit_code=1, output="status error"),
+                state=container_spec.state,
+            )
+        )
 
 
 def test_configure_image_installs_login_page_support_files(
@@ -256,3 +287,64 @@ def test_configure_image_keeps_dockerfile_run_commands_below_line_limit(
     )._prepare_specs()
 
     assert max(len(command) for command in image_spec.run_commands) < 65_535
+
+
+def test_prepare_specs_compose_opencode_server_persistence_and_openai_login(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodePersistencePluginService(),
+            OpenCodeServerPluginService(
+                host_port=openai_provider_env.opencode_api_port,
+                container_port=openai_provider_env.opencode_api_port,
+            ),
+            service_class()(host_port=openai_provider_env.openai_auth_port),
+        ]
+    )._prepare_specs()
+
+    assert container_spec.command == [
+        "opencode",
+        "serve",
+        "--hostname",
+        "0.0.0.0",
+        "--port",
+        str(openai_provider_env.opencode_api_port),
+    ]
+    assert container_spec.env["HOME"] == "/tmp/opencode-home"
+    assert container_spec.env["XDG_CONFIG_HOME"] == "/tmp/opencode-home/.config"
+    assert container_spec.env["XDG_DATA_HOME"] == "/tmp/opencode-home/.local/share"
+    assert container_spec.env["OPENCODE_API_PORT"] == str(openai_provider_env.opencode_api_port)
+    assert container_spec.env["OPENAI_AUTH_PORT"] == str(openai_provider_env.openai_auth_port)
+    assert container_spec.ports[openai_provider_env.opencode_api_port] == (
+        openai_provider_env.opencode_api_port
+    )
+    assert container_spec.ports[openai_provider_env.openai_auth_port] == (
+        openai_provider_env.openai_auth_port
+    )
+    runtime = container_spec.state[OPENCODE_RUNTIME_STATE_KEY]
+    assert isinstance(runtime, OpenCodeRuntimeMetadata)
+    assert runtime.api_container_port == openai_provider_env.opencode_api_port
+    assert len(container_spec.startup_tasks) == 1
+    assert container_spec.startup_tasks[0].name == "openai-opencode-default-model"
+    assert any(process.name == "openai-provider-login" for process in container_spec.managed_processes)
+
+
+class _SuccessfulExecContainer:
+    def __init__(self, exit_code: int = 0, output: str = "") -> None:
+        self.exit_code = exit_code
+        self.output = output
+        self.commands: list[list[str]] = []
+
+    def exec_run(self, command: list[str]) -> object:
+        self.commands.append(command)
+        exit_code = self.exit_code
+        output = self.output.encode("utf-8")
+
+        class Result:
+            pass
+
+        result = Result()
+        result.exit_code = exit_code
+        result.output = output
+        return result

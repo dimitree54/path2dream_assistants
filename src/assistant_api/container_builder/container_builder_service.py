@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import logging
+import shlex
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from assistant_api.container_builder.container_plugin import ContainerPluginService
 from assistant_api.models import (
+    CommandExecResult,
+    ContainerStartupTask,
     ContainerRuntimeContext,
     ContainerSpec,
     ImageSpec,
@@ -14,11 +18,19 @@ from assistant_api.models import (
 )
 
 from ._errors import ConfigurationError
-from ._docker_runtime import build_image, ensure_named_volumes, run_container
+from ._docker_runtime import (
+    build_image,
+    ensure_named_volumes,
+    run_container,
+    startup_task_log_path,
+    startup_task_status_path,
+)
 
 
 DEFAULT_IMAGE_TAG = "notes-assistant-opencode:latest"
 DEFAULT_CONTAINER_NAME = "notes-assistant-opencode"
+STARTUP_TASK_TIMEOUT_SECONDS = 300
+STARTUP_TASK_POLL_SECONDS = 0.5
 LOGGER = logging.getLogger(__name__)
 
 
@@ -102,6 +114,7 @@ class ContainerBuilderService:
             container=container,
             state=container_spec.state,
         )
+        self._wait_for_startup_tasks(container, container_spec.startup_tasks)
         for index, plugin in enumerate(self.plugins):
             lifecycle.run(
                 index,
@@ -140,11 +153,17 @@ class ContainerBuilderService:
                 lambda plugin=plugin: plugin.configure_image(image_spec),
             )
         for index, plugin in enumerate(self.plugins):
+            task_count_before = len(container_spec.startup_tasks)
             lifecycle.run(
                 index,
                 plugin,
                 "configure_container",
                 lambda plugin=plugin: plugin.configure_container(container_spec),
+            )
+            self._assign_startup_task_owners(
+                container_spec,
+                task_count_before,
+                plugin.name,
             )
         lifecycle.validate_finished()
 
@@ -164,3 +183,171 @@ class ContainerBuilderService:
             return
         LOGGER.info("Removing existing container before start: name=%s", container_name)
         container.remove(force=True)
+
+    @staticmethod
+    def _assign_startup_task_owners(
+        container_spec: ContainerSpec,
+        first_new_task_index: int,
+        plugin_name: str,
+    ) -> None:
+        for index in range(first_new_task_index, len(container_spec.startup_tasks)):
+            task = container_spec.startup_tasks[index]
+            if task.owner_plugin_name is None:
+                container_spec.startup_tasks[index] = replace(
+                    task,
+                    owner_plugin_name=plugin_name,
+                )
+
+    def _wait_for_startup_tasks(
+        self,
+        container: Any,
+        tasks: list[ContainerStartupTask],
+    ) -> None:
+        if not tasks:
+            return
+
+        deadline = time.monotonic() + STARTUP_TASK_TIMEOUT_SECONDS
+        succeeded: set[int] = set()
+        while time.monotonic() < deadline:
+            for index, task in enumerate(tasks):
+                if index in succeeded:
+                    continue
+                status = self._read_startup_task_status(container, index, task)
+                if not status:
+                    continue
+                if status.get("status") == "succeeded":
+                    succeeded.add(index)
+                    continue
+                if status.get("status") == "failed":
+                    raise RuntimeError(
+                        self._startup_task_failure_message(
+                            container,
+                            index,
+                            task,
+                            status,
+                        )
+                    )
+            if len(succeeded) == len(tasks):
+                return
+            if self._container_has_stopped(container):
+                raise RuntimeError(
+                    self._stopped_container_startup_message(
+                        container,
+                        tasks,
+                        succeeded,
+                    )
+                )
+            time.sleep(STARTUP_TASK_POLL_SECONDS)
+
+        task = next(task for index, task in enumerate(tasks) if index not in succeeded)
+        raise TimeoutError(
+            "Startup task did not finish before timeout: "
+            f"plugin={task.owner_plugin_name or 'unknown'} "
+            f"task={task.name} timeout_seconds={STARTUP_TASK_TIMEOUT_SECONDS}"
+        )
+
+    def _read_startup_task_status(
+        self,
+        container: Any,
+        index: int,
+        task: ContainerStartupTask,
+    ) -> dict[str, str] | None:
+        result = self._exec_container(
+            container,
+            [
+                "/bin/sh",
+                "-lc",
+                f"cat {shlex.quote(startup_task_status_path(index, task))}",
+            ],
+        )
+        if result is None or result.exit_code != 0:
+            return None
+        return _parse_startup_status(result.output)
+
+    def _startup_task_failure_message(
+        self,
+        container: Any,
+        index: int,
+        task: ContainerStartupTask,
+        status: dict[str, str],
+    ) -> str:
+        log_output = self._read_container_text_file(
+            container,
+            startup_task_log_path(index, task),
+        )
+        return (
+            "Plugin startup task failed: "
+            f"plugin={status.get('owner') or task.owner_plugin_name or 'unknown'} "
+            f"task={status.get('name') or task.name} "
+            f"exit_code={status.get('exit_code') or 'unknown'}"
+            f"{_format_output_tail(log_output)}"
+        )
+
+    def _stopped_container_startup_message(
+        self,
+        container: Any,
+        tasks: list[ContainerStartupTask],
+        succeeded: set[int],
+    ) -> str:
+        task = next(task for index, task in enumerate(tasks) if index not in succeeded)
+        return (
+            "Container exited before startup tasks completed: "
+            f"plugin={task.owner_plugin_name or 'unknown'} task={task.name}"
+            f"{_format_output_tail(self._container_logs(container))}"
+        )
+
+    def _read_container_text_file(self, container: Any, path: str) -> str:
+        result = self._exec_container(
+            container,
+            ["/bin/sh", "-lc", f"cat {shlex.quote(path)}"],
+        )
+        if result is None or result.exit_code != 0:
+            return ""
+        return result.output
+
+    @staticmethod
+    def _exec_container(container: Any, command: list[str]) -> CommandExecResult | None:
+        try:
+            result = container.exec_run(command)
+        except Exception:
+            return None
+        output = result.output
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        return CommandExecResult(exit_code=result.exit_code, output=output)
+
+    @staticmethod
+    def _container_has_stopped(container: Any) -> bool:
+        try:
+            container.reload()
+        except Exception:
+            pass
+        status = getattr(container, "status", None)
+        return status in {"dead", "exited", "removing"}
+
+    @staticmethod
+    def _container_logs(container: Any) -> str:
+        try:
+            logs = container.logs(tail=200)
+        except Exception:
+            return ""
+        if isinstance(logs, bytes):
+            return logs.decode("utf-8", errors="replace")
+        return str(logs)
+
+
+def _parse_startup_status(output: str) -> dict[str, str]:
+    status: dict[str, str] = {}
+    for line in output.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        status[key] = value
+    return status
+
+
+def _format_output_tail(output: str) -> str:
+    if not output:
+        return ""
+    tail = output[-4000:]
+    return "\n--- output tail ---\n" + tail

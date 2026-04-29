@@ -33,6 +33,7 @@ class InboxUploadPluginService:
         self.upload_endpoint_path = self._validate_upload_endpoint_path(
             upload_endpoint_path
         )
+        self._container_path: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
         image.run_commands.append("apk add --no-cache python3 py3-pip")
@@ -44,6 +45,7 @@ class InboxUploadPluginService:
     def configure_container(self, container: ContainerSpec) -> None:
         mount = self._mount_metadata(container.state)
         container_path = str(mount.container_path)
+        self._container_path = container_path
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="inbox-upload-server",
@@ -61,7 +63,23 @@ class InboxUploadPluginService:
         container.ports[self.container_port] = self.host_port
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        mount = self._mount_metadata(runtime.state)
+        container_path = self._container_path or str(mount.container_path)
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _upload_health_command(
+                    container_path=container_path,
+                    container_port=self.container_port,
+                    upload_endpoint_path=self.upload_endpoint_path,
+                    source_type=mount.source_type,
+                    remote_name=mount.remote_name,
+                ),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"inbox upload health check failed: {result.output}")
 
     @staticmethod
     def _validate_port(name: str, value: int) -> int:
@@ -132,4 +150,73 @@ def _upload_server_command(
         f"INBOX_ENDPOINT_PATH={upload_endpoint_path!r} "
         f"INBOX_PORT={container_port} "
         f"exec python3 {UPLOAD_HANDLER_PATH}"
+    )
+
+
+def _upload_health_command(
+    *,
+    container_path: str,
+    container_port: int,
+    upload_endpoint_path: str,
+    source_type: str,
+    remote_name: str | None,
+) -> str:
+    return (
+        "python3 - <<'PY'\n"
+        "import json\n"
+        "import os\n"
+        "import pathlib\n"
+        "import subprocess\n"
+        "import time\n"
+        "import urllib.error\n"
+        "import urllib.request\n"
+        f"container_path = pathlib.Path({container_path!r})\n"
+        f"url = 'http://127.0.0.1:{container_port}{upload_endpoint_path}'\n"
+        f"source_type = {source_type!r}\n"
+        f"remote_name = {remote_name!r}\n"
+        "filename = f'.notes-assistant-inbox-health-{os.getpid()}.txt'\n"
+        "content = b'ok'\n"
+        "boundary = 'NotesAssistantHealthBoundary'\n"
+        "body = b'\\r\\n'.join([\n"
+        "    f'--{boundary}'.encode(),\n"
+        "    f'Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"'.encode(),\n"
+        "    b'Content-Type: text/plain',\n"
+        "    b'',\n"
+        "    content,\n"
+        "    f'--{boundary}--'.encode(),\n"
+        "])\n"
+        "deadline = time.monotonic() + 60\n"
+        "last_error = ''\n"
+        "while time.monotonic() < deadline:\n"
+        "    request = urllib.request.Request(\n"
+        "        url,\n"
+        "        data=body,\n"
+        "        method='POST',\n"
+        "        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},\n"
+        "    )\n"
+        "    try:\n"
+        "        if source_type == 'remote':\n"
+        "            subprocess.run(['mountpoint', '-q', str(container_path)], check=True)\n"
+        "            if remote_name:\n"
+        "                subprocess.run(['rclone', 'lsf', f'{remote_name}:'], check=True, capture_output=True, text=True)\n"
+        "        with urllib.request.urlopen(request, timeout=2) as response:\n"
+        "            response_body = response.read().decode('utf-8')\n"
+        "            if response.status != 200:\n"
+        "                raise RuntimeError(f'HTTP {response.status}: {response_body}')\n"
+        "            payload = json.loads(response_body)\n"
+        "            saved_path = pathlib.Path(payload['path'])\n"
+        "            expected_path = container_path / 'inbox' / filename\n"
+        "            if saved_path != expected_path:\n"
+        "                raise RuntimeError(f'unexpected upload path: {saved_path}')\n"
+        "            if expected_path.read_bytes() != content:\n"
+        "                raise RuntimeError('uploaded probe content mismatch')\n"
+        "            expected_path.unlink()\n"
+        "            raise SystemExit(0)\n"
+        "    except urllib.error.HTTPError as error:\n"
+        "        last_error = error.read().decode('utf-8', errors='replace')\n"
+        "    except Exception as error:\n"
+        "        last_error = str(error)\n"
+        "    time.sleep(1)\n"
+        "raise SystemExit(f'inbox upload endpoint did not become healthy: {last_error}')\n"
+        "PY"
     )

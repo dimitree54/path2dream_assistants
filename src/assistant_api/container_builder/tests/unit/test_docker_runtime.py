@@ -12,7 +12,13 @@ from assistant_api.container_builder._docker_runtime import (
     run_container,
 )
 from assistant_api.container_builder._dockerfile import render_dockerfile
-from assistant_api.models import ContainerManagedProcess, ContainerSpec, ImageSpec, VolumeMount
+from assistant_api.models import (
+    ContainerManagedProcess,
+    ContainerSpec,
+    ContainerStartupTask,
+    ImageSpec,
+    VolumeMount,
+)
 
 
 def test_default_command_keeps_minimal_container_running() -> None:
@@ -90,3 +96,30 @@ def test_container_command_composes_raw_command_with_managed_processes() -> None
     assert "opencode web &" in command[2]
     assert "python3 /opt/auth.py &" in command[2]
     assert "wait -n" in command[2]
+
+
+def test_container_command_records_startup_task_status_and_logs() -> None:
+    command = container_command(
+        ContainerSpec(
+            name="container-name",
+            image_tag="image-tag",
+            startup_tasks=[
+                ContainerStartupTask(
+                    name="install artifacts",
+                    command=["/bin/sh", "-lc", "echo ok"],
+                    owner_plugin_name="skills-sync",
+                )
+            ],
+            command=["sleep", "infinity"],
+        )
+    )
+
+    assert command[:2] == ["/bin/sh", "-lc"]
+    shell = command[2]
+    assert "status=running" in shell
+    assert "status=succeeded" in shell
+    assert "status=failed" in shell
+    assert "owner=skills-sync" in shell
+    assert "name=install artifacts" in shell
+    assert "Startup task failed: plugin=skills-sync task=install artifacts" in shell
+    assert "exec sleep infinity" in shell

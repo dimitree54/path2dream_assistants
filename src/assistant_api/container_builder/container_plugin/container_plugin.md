@@ -52,6 +52,11 @@ Shared runtime-модели этого интерфейса находятся �
 - managed process — long-running process, которым управляет container entrypoint;
 - Docker runtime capabilities — минимальные Docker options, нужные plugin для запуска container, включая devices, `cap_add` и security options.
 
+Startup task ownership:
+- plugin, который добавляет startup task, считается владельцем этой task;
+- `ContainerBuilderService` должен дождаться завершения startup tasks перед `post_start`;
+- если startup task завершается ошибкой или не завершается за bounded timeout, startup должен fail fast с именем plugin-владельца и task.
+
 Стандартное правило host/container responsibility:
 - host-side plugin logic should stay minimal and limited to preparing specs, validating configuration, and explicit short post-start checks;
 - most runtime behavior must happen inside the container;
@@ -75,6 +80,12 @@ Shared runtime-модели этого интерфейса находятся �
 - host/external port не должен требоваться через environment variables и не должен вычисляться из state другого plugin;
 - container/internal port может быть выбран самим plugin, передан через init-time configuration или взят из environment variable, если это явно задокументировано конкретным plugin.
 
+Стандартное правило fail-fast hooks:
+- каждый lifecycle hook отвечает не только за запуск своей логики, но и за проверку, что запущенная plugin feature полностью доступна и здорова внутри container;
+- hook не должен успешно возвращаться, пока соответствующая plugin feature не прошла health validation;
+- если feature не достигла healthy state за bounded timeout или health validation завершилась ошибкой, hook должен fail fast;
+- запуск mount, startup task, managed process, endpoint или другого container-side behavior без проверки его фактической готовности запрещён.
+
 Стандартное правило тестирования plugin:
 - contract tests должны покрывать каждое публичное требование plugin-документации;
 - spec-level tests обязательны для проверки `ImageSpec`, `ContainerSpec`, shared state, startup tasks, managed processes, ports, volumes и Docker runtime capabilities;
@@ -95,6 +106,7 @@ Shared runtime-модели этого интерфейса находятся �
 - Plugin не должен сам запускать container.
 - Plugin не должен знать, кто его использует.
 - Plugin должен fail fast при невалидной конфигурации или отсутствующих required state.
+- Plugin hook должен fail fast, если запущенная им plugin feature не стала полностью healthy внутри container.
 - Startup tasks from plugins must run before managed long-running processes.
 - Managed processes from several plugins must be composed without overwriting each other.
 - Raw `ContainerSpec.command` and managed processes must not be used together silently.

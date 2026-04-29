@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path, PurePosixPath
 
 from assistant_api.container_builder.container_plugin import MOUNT_METADATA_STATE_KEY
@@ -45,4 +46,34 @@ class LocalDirMountPluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
-        return None
+        result = runtime.exec(
+            [
+                "/bin/sh",
+                "-lc",
+                _mount_health_command(str(self.container_path), self.mode),
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"local directory mount health check failed: {result.output}")
+
+
+def _mount_health_command(container_path: str, mode: str) -> str:
+    quoted_path = shlex.quote(container_path)
+    commands = [
+        "set -eu",
+        f"mount_path={quoted_path}",
+        'test -d "$mount_path"',
+        'test -r "$mount_path"',
+    ]
+    if mode != "ro":
+        commands.extend(
+            [
+                'probe="$mount_path/.notes-assistant-local-mount-health-$$"',
+                'trap \'rm -f "$probe"\' EXIT INT TERM',
+                "printf '%s' ok > \"$probe\"",
+                'test "$(cat "$probe")" = ok',
+                'rm -f "$probe"',
+                "trap - EXIT INT TERM",
+            ]
+        )
+    return "\n".join(commands)

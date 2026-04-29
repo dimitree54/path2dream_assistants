@@ -43,11 +43,14 @@ class SyncMountDirNamePluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
+During `post_start`, the service must create the same-name symlink and verify inside the container that the symlink points to the mounted source and that the mounted source is accessible.
+
 # Requirements
 - The service must fail fast if no previous plugin provided mount metadata.
 - The default working directory must be `/workspace/workdir`.
 - The default raw mounted source target must be `/workspace/mounted-source`.
 - The same-name entry inside working dir must be a symlink to the mounted source.
+- The service must fail fast if the same-name symlink cannot be created or verified.
 - The service must not expose ports.
 - The service must not configure OpenCode persistence.
 - The service must not start OpenCode Web.

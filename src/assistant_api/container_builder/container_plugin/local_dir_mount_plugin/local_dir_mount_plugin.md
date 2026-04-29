@@ -43,9 +43,12 @@ class LocalDirMountPluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
+During `post_start`, the service must verify inside the container that `container_path` exists, is readable, and is writable when the mount mode is not `ro`.
+
 # Requirements
 - By default host path must be mounted into `/workspace/project`.
 - The service must record `MountMetadata` so mount-aware plugins can use it.
+- The service must fail fast if the mounted directory is not usable inside the container.
 - The service must not imply that OpenCode runs from the mounted directory.
 - The service must not expose any port.
 - The service must not configure OpenCode persistence.

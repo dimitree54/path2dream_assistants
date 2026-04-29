@@ -46,6 +46,8 @@ The recorded metadata must contain:
 - `working_dir` — final `ContainerSpec.working_dir`, from which OpenCode is launched;
 - `api_container_port` — container-local port passed to `opencode serve --port` and used by other plugins for local OpenCode API calls.
 
+During `post_start`, the service must wait until the container-local `GET /global/health` endpoint reports healthy on `api_container_port`.
+
 Команда запуска:
 
 ```bash
@@ -61,6 +63,7 @@ opencode serve --hostname 0.0.0.0 --port <container_port>
 - The service must not mount host directories.
 - If no working directory was set by previous plugins, the service must use `/workspace`.
 - The service must record the final working directory and API container port in standard OpenCode runtime state.
+- The service must fail fast if the OpenCode Server health endpoint does not become healthy inside the container.
 - The service must not add auth/password logic.
 - The service must not start or open Web UI.
 

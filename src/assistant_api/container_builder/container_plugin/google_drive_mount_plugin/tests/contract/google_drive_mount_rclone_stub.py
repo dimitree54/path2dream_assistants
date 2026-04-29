@@ -39,8 +39,10 @@ class FakeContainer:
 
     def exec_run(self, command: list[str]) -> ExecRunResult:
         self.commands.append(command)
-        command_text = " ".join(command)
-        if "mountpoint" in command_text:
+        if command[:2] == ["/bin/sh", "-lc"]:
+            result = subprocess.run(command, check=False, capture_output=True, text=True)
+            return ExecRunResult(result.returncode, result.stdout + result.stderr)
+        if command[:2] == ["mountpoint", "-q"]:
             if os.environ.get("FAKE_MOUNTPOINT_FAIL") == "1":
                 return ExecRunResult(1, "not a mountpoint")
             return ExecRunResult(0 if self.mount_marker.exists() else 1)
@@ -64,7 +66,6 @@ def start_plugin(
         container=FakeContainer(fake_rclone.mount_marker),
         state=state,
     )
-    plugin.post_start(runtime)
     server = GoogleDriveMountAuthServer(
         auth_port=plugin.auth_container_port,
         host_port=plugin.host_port,
@@ -78,6 +79,7 @@ def start_plugin(
     )
     server.start_in_thread("127.0.0.1")
     _started_auth_servers.append(server)
+    plugin.post_start(runtime)
     return runtime
 
 
@@ -120,6 +122,21 @@ if args[0] == "mount":
         raise SystemExit(52)
     mount_marker.write_text("mounted", encoding="utf-8")
     time.sleep(float(os.environ.get("FAKE_RCLONE_MOUNT_SECONDS", "0.05")))
+    raise SystemExit(0)
+if args[0] == "lsf":
+    if os.environ.get("FAKE_RCLONE_FAIL_LSF") == "1":
+        print("remote auth failed", file=sys.stderr)
+        raise SystemExit(53)
+    if os.environ.get("FAKE_RCLONE_REQUIRE_EXPIRED_TOKEN") == "1":
+        config_env = os.environ.get("RCLONE_CONFIG")
+        if not config_env:
+            raise SystemExit(54)
+        config_text = pathlib.Path(config_env).read_text(encoding="utf-8")
+        if '"expiry": "1970-01-01T00:00:00Z"' not in config_text:
+            print("Invalid Credentials", file=sys.stderr)
+            raise SystemExit(55)
+    if not config_marker.exists():
+        raise SystemExit(52)
     raise SystemExit(0)
 if args[0] in {"unmount", "cleanup"}:
     mount_marker.unlink(missing_ok=True)
