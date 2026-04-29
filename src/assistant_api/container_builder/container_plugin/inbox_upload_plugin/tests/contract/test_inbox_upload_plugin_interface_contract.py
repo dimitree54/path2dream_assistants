@@ -412,8 +412,8 @@ def test_configure_image_installs_python3() -> None:
     image_spec = ImageSpec()
     plugin.configure_image(image_spec)
 
-    run_commands = "\n".join(image_spec.run_commands)
-    assert "python3" in run_commands
+    assert "python3" in image_spec.apk_packages
+    assert "py3-pip" in image_spec.apk_packages
 
 
 def test_configure_image_can_install_fastapi_dependencies() -> None:
@@ -422,27 +422,9 @@ def test_configure_image_can_install_fastapi_dependencies() -> None:
     image_spec = ImageSpec()
     plugin.configure_image(image_spec)
 
-    dependency_commands = "\n".join(
-        command
-        for command in image_spec.run_commands
-        if "fastapi" in command
-        or "uvicorn" in command
-        or "python-multipart" in command
-    )
-    assert "fastapi" in dependency_commands
-    assert "uvicorn" in dependency_commands
-    assert "python-multipart" in dependency_commands
-
-    for index, command in enumerate(image_spec.run_commands):
-        if "python3 -m pip" not in command:
-            continue
-
-        commands_before_pip_use = "\n".join(image_spec.run_commands[: index + 1])
-        assert (
-            "py3-pip" in commands_before_pip_use
-            or "ensurepip" in commands_before_pip_use
-            or "get-pip.py" in commands_before_pip_use
-        ), "configure_image uses python3 -m pip before installing pip"
+    assert image_spec.python_packages == ["fastapi", "uvicorn", "python-multipart"]
+    assert "py3-pip" in image_spec.apk_packages
+    assert all("pip install" not in command for command in image_spec.run_commands)
 
 
 def test_configure_image_copies_upload_handler_files_to_container() -> None:

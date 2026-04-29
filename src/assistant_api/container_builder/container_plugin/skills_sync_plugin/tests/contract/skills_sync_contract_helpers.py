@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -50,14 +51,18 @@ def service_class() -> type[Any]:
 
 def prepare_container(
     plugin_names: list[str],
-    working_dir: Path,
+    working_dir: Path | None = None,
     *,
     repo_url: str = DEFAULT_REPO_URL,
     repo_ref: str = DEFAULT_REPO_REF,
 ) -> ContainerSpec:
     plugin = service_class()(plugin_names, repo_url=repo_url, repo_ref=repo_ref)
+    plugins: list[Any] = []
+    if working_dir is not None:
+        plugins.append(WorkingDirPlugin(working_dir))
+    plugins.append(plugin)
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[WorkingDirPlugin(working_dir), plugin]
+        plugins=plugins
     )._prepare_specs()
     return container_spec
 
@@ -82,12 +87,18 @@ def only_startup_task(container_spec: ContainerSpec) -> Any:
     return task
 
 
-def run_startup_task(task: Any) -> StartupResult:
+def run_startup_task(task: Any, *, home: Path | None = None) -> StartupResult:
+    env = None
+    if home is not None:
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["XDG_CONFIG_HOME"] = str(home / ".config")
     result = subprocess.run(
         task.command,
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
     return StartupResult(
         exit_code=result.returncode,
@@ -96,16 +107,25 @@ def run_startup_task(task: Any) -> StartupResult:
     )
 
 
-def assert_startup_task_succeeds(task: Any) -> StartupResult:
-    result = run_startup_task(task)
+def assert_startup_task_succeeds(
+    task: Any,
+    *,
+    home: Path | None = None,
+) -> StartupResult:
+    result = run_startup_task(task, home=home)
     assert result.exit_code == 0, result.output
     return result
 
 
-def assert_no_installed_artifacts(target: Path) -> None:
-    assert not (target / "AGENTS.md").exists()
-    assert not (target / ".opencode" / "agents").exists()
-    assert not (target / ".opencode" / "skills").exists()
+def opencode_config_dir(home: Path) -> Path:
+    return home / ".config" / "opencode"
+
+
+def assert_no_installed_artifacts(config_dir: Path) -> None:
+    assert not (config_dir / "AGENTS.md").exists()
+    assert not (config_dir / "opencode.json").exists()
+    assert not (config_dir / "agents").exists()
+    assert not (config_dir / "skills").exists()
 
 
 def write_file(path: Path, content: str) -> None:
@@ -113,13 +133,11 @@ def write_file(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def clone_live_repo_with_conflicting_bundles(
+def clone_live_repo(
     tmp_path: Path,
-    *,
-    agent_file_name: str | None = None,
-    skill_name: str | None = None,
+    directory_name: str = "opencode-plugins-repo",
 ) -> Path:
-    repo = tmp_path / "opencode-plugins-conflict-repo"
+    repo = tmp_path / directory_name
     subprocess.run(
         [
             "git",
@@ -135,6 +153,16 @@ def clone_live_repo_with_conflicting_bundles(
         capture_output=True,
         text=True,
     )
+    return repo
+
+
+def clone_live_repo_with_conflicting_bundles(
+    tmp_path: Path,
+    *,
+    agent_file_name: str | None = None,
+    skill_name: str | None = None,
+) -> Path:
+    repo = clone_live_repo(tmp_path, "opencode-plugins-conflict-repo")
 
     for bundle_name in ("contract-conflict-one", "contract-conflict-two"):
         if agent_file_name is not None:

@@ -268,6 +268,8 @@ def test_configure_image_installs_login_page_support_files(
     )._prepare_specs()
     install_commands = "\n".join(image_spec.run_commands)
 
+    assert image_spec.apk_packages == ["python3"]
+    assert image_spec.python_packages == []
     assert "openai_provider_auth_server.py" in install_commands
     assert "_login_page.py" in install_commands
     assert "assets/petprojectcofounder_logo_small.PNG" in install_commands
@@ -311,9 +313,9 @@ def test_prepare_specs_compose_opencode_server_persistence_and_openai_login(
         "--port",
         str(openai_provider_env.opencode_api_port),
     ]
-    assert container_spec.env["HOME"] == "/tmp/opencode-home"
-    assert container_spec.env["XDG_CONFIG_HOME"] == "/tmp/opencode-home/.config"
-    assert container_spec.env["XDG_DATA_HOME"] == "/tmp/opencode-home/.local/share"
+    assert container_spec.env["HOME"] == "/root"
+    assert container_spec.env["XDG_CONFIG_HOME"] == "/root/.config"
+    assert container_spec.env["XDG_DATA_HOME"] == "/root/.local/share"
     assert container_spec.env["OPENCODE_API_PORT"] == str(openai_provider_env.opencode_api_port)
     assert container_spec.env["OPENAI_AUTH_PORT"] == str(openai_provider_env.openai_auth_port)
     assert container_spec.ports[openai_provider_env.opencode_api_port] == (

@@ -40,10 +40,8 @@ class OutboxDownloadPluginService:
         self._container_path: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
-        image.run_commands.append("apk add --no-cache python3 py3-pip")
-        image.run_commands.append(
-            "python3 -m pip install --break-system-packages fastapi uvicorn"
-        )
+        image.apk_packages.extend(["python3", "py3-pip"])
+        image.python_packages.extend(["fastapi", "uvicorn"])
         image.run_commands.extend(_install_outbox_handler_commands())
 
     def configure_container(self, container: ContainerSpec) -> None:

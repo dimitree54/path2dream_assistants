@@ -52,6 +52,13 @@ Shared runtime-модели этого интерфейса находятся �
 - managed process — long-running process, которым управляет container entrypoint;
 - Docker runtime capabilities — минимальные Docker options, нужные plugin для запуска container, включая devices, `cap_add` и security options.
 
+Стандартное правило image dependencies:
+- plugin должен объявлять системные пакеты через `ImageSpec.apk_packages`;
+- plugin должен объявлять Python packages для `pip` через `ImageSpec.python_packages`;
+- plugin не должен добавлять raw package-manager install commands в `ImageSpec.run_commands`;
+- `ContainerBuilderService` отвечает за rendering dependency install commands до plugin runtime commands;
+- несколько plugins могут объявить одинаковые package dependencies, а Dockerfile rendering должен de-duplicate их в одном install step каждого типа.
+
 Startup task ownership:
 - plugin, который добавляет startup task, считается владельцем этой task;
 - `ContainerBuilderService` должен дождаться завершения startup tasks перед `post_start`;
@@ -96,6 +103,8 @@ Startup task ownership:
 - live container integration test должен отдельно проверять, что image собирается с plugin dependencies до проверки endpoint/process behavior;
 - endpoint/process tests должны выполнять реальные HTTP/CLI/file operations через published contract, а не только проверять command strings;
 - tests для post-response или background effects должны ждать documented effect в bounded timeout, а не полагаться на синхронное выполнение в тот же момент получения ответа;
+- local Docker live container tests являются частью default pytest quality gate;
+- `manual` marker разрешён только для tests, которым требуются внешние credentials, human OAuth/login interaction или другой неавтоматизируемый внешний state;
 - если live tests помечены как `manual` или исключены из default pytest run, они не считаются частью default quality gate; перед утверждением container-runtime behavior эти tests должны быть запущены явно;
 - для каждого manual live test должен существовать non-manual contract test, который ловит наиболее вероятные spec-level причины невозможности запуска в container;
 - plugin считается проверенным для container-runtime behavior только после успешного прохождения соответствующих live container integration tests.

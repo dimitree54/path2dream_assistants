@@ -143,8 +143,9 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
     install_commands = "\n".join(image_spec.run_commands)
 
-    assert any("rclone" in command for command in image_spec.run_commands)
-    assert any("fuse3" in command for command in image_spec.run_commands)
+    assert "rclone" in image_spec.apk_packages
+    assert "fuse3" in image_spec.apk_packages
+    assert "python3" in image_spec.apk_packages
     assert any("/workspace/project" in command for command in image_spec.run_commands)
     assert "assets/petprojectcofounder_login_page.css" in install_commands
     assert container_spec.ports == {host_port: host_port}

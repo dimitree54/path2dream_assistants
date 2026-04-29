@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 
 import pytest
 
@@ -11,7 +10,6 @@ from assistant_api.models import ContainerRuntimeContext
 from skills_sync_contract_helpers import (
     DEFAULT_REPO_REF,
     DEFAULT_REPO_URL,
-    WorkingDirPlugin,
     only_startup_task,
     prepare_container,
     service_class,
@@ -40,18 +38,11 @@ def test_init_rejects_duplicate_plugin_names() -> None:
         service_class()(["yid-notes-assistant", "yid-notes-assistant"])
 
 
-def test_configure_container_requires_working_dir() -> None:
-    with pytest.raises(ConfigurationError, match="working_dir"):
-        ContainerBuilderService(
-            plugins=[service_class()(["yid-notes-assistant"])]
-        )._prepare_specs()
+def test_configure_container_does_not_require_working_dir() -> None:
+    container_spec = prepare_container(["yid-notes-assistant"])
+    task = only_startup_task(container_spec)
 
-
-def test_valid_working_dir_registers_single_startup_task_only(tmp_path: Path) -> None:
-    container_spec = prepare_container(["yid-notes-assistant"], tmp_path)
-    only_startup_task(container_spec)
-
-    assert container_spec.working_dir.as_posix() == str(tmp_path)
+    assert container_spec.working_dir is None
     assert container_spec.env == {}
     assert container_spec.volumes == {}
     assert container_spec.ports == {}
@@ -59,42 +50,39 @@ def test_valid_working_dir_registers_single_startup_task_only(tmp_path: Path) ->
     assert container_spec.devices == []
     assert container_spec.cap_add == []
     assert container_spec.security_opt == []
+    assert "install_plugins_system.py" in task.command[2]
+    assert "--config-dir" in task.command[2]
+    assert "XDG_CONFIG_HOME" in task.command[2]
+    assert "install_plugins.py --target" not in task.command[2]
+    assert "--target" not in task.command[2]
 
 
-def test_skills_sync_only_adds_required_image_dependencies(tmp_path: Path) -> None:
+def test_skills_sync_only_adds_required_image_dependencies() -> None:
     image_spec, _container_spec = ContainerBuilderService(
-        plugins=[
-            WorkingDirPlugin(tmp_path),
-            service_class()(["yid-notes-assistant"]),
-        ]
+        plugins=[service_class()(["yid-notes-assistant"])]
     )._prepare_specs()
 
     assert image_spec.env == {}
     assert image_spec.workdir is None
     assert image_spec.command is None
-    assert image_spec.run_commands == [
-        "mkdir -p /workspace",
-        "apk add --no-cache git python3",
-    ]
+    assert image_spec.apk_packages == ["git", "python3"]
+    assert image_spec.python_packages == []
+    assert image_spec.run_commands == ["mkdir -p /workspace"]
 
 
-def test_configure_image_installs_startup_task_runtime_dependencies(tmp_path: Path) -> None:
+def test_configure_image_installs_startup_task_runtime_dependencies() -> None:
     image_spec, _container_spec = ContainerBuilderService(
-        plugins=[
-            WorkingDirPlugin(tmp_path),
-            service_class()(["yid-notes-assistant"]),
-        ]
+        plugins=[service_class()(["yid-notes-assistant"])]
     )._prepare_specs()
 
-    run_commands = "\n".join(image_spec.run_commands)
-    assert "git" in run_commands
-    assert "python3" in run_commands
+    assert "git" in image_spec.apk_packages
+    assert "python3" in image_spec.apk_packages
 
 
-def test_post_start_checks_installed_artifacts(tmp_path: Path) -> None:
+def test_post_start_checks_installed_artifacts() -> None:
     plugin = service_class()(["yid-notes-assistant"])
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[WorkingDirPlugin(tmp_path), plugin]
+        plugins=[plugin]
     )._prepare_specs()
     container = _RecordingContainer(exit_code=0)
 
@@ -108,13 +96,15 @@ def test_post_start_checks_installed_artifacts(tmp_path: Path) -> None:
 
     assert container.commands
     assert "AGENTS.md" in container.commands[0][2]
-    assert ".opencode" in container.commands[0][2]
+    assert "opencode.json" in container.commands[0][2]
+    assert "XDG_CONFIG_HOME" in container.commands[0][2]
+    assert "$XDG_CONFIG_HOME/opencode" in container.commands[0][2]
 
 
-def test_post_start_fails_when_installed_artifacts_are_missing(tmp_path: Path) -> None:
+def test_post_start_fails_when_installed_artifacts_are_missing() -> None:
     plugin = service_class()(["yid-notes-assistant"])
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[WorkingDirPlugin(tmp_path), plugin]
+        plugins=[plugin]
     )._prepare_specs()
 
     with pytest.raises(RuntimeError, match="skills sync health check failed"):

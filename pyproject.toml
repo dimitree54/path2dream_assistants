@@ -27,6 +27,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-m 'not manual'"
 markers = [
+  "live_container: local Docker integration tests that are part of the default quality gate",
   "manual: live integration tests that require external credentials or human interaction",
 ]
 pythonpath = ["src"]

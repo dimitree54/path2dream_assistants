@@ -173,5 +173,5 @@ def test_full_plugin_composition_uses_public_services(tmp_path: Path) -> None:
     assert container_spec.volumes[str(tmp_path)].target.as_posix() == "/workspace/mounted-source"
     assert container_spec.working_dir.as_posix() == "/workspace/workdir"
     assert container_spec.ports == {4096: 4097}
-    assert container_spec.env["HOME"] == "/tmp/opencode-home"
+    assert container_spec.env["HOME"] == "/root"
     assert container_spec.command[:2] == ["opencode", "web"]

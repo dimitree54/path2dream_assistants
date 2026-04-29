@@ -66,7 +66,7 @@ class GoogleDriveMountPluginService:
         self.credentials_json = os.environ["GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON"]
 
     def configure_image(self, image: ImageSpec) -> None:
-        image.run_commands.append("apk add --no-cache rclone fuse3 python3")
+        image.apk_packages.extend(["rclone", "fuse3", "python3"])
         image.run_commands.extend(_install_auth_server_commands())
         if self._explicit_container_path is not None:
             image.run_commands.append(f"mkdir -p {shlex.quote(str(self._explicit_container_path))}")

@@ -17,18 +17,56 @@ def test_opencode_persistence_plugin_adds_only_env_and_named_volumes() -> None:
     )._prepare_specs()
 
     assert container_spec.env == {
-        "HOME": "/tmp/opencode-home",
-        "XDG_CONFIG_HOME": "/tmp/opencode-home/.config",
-        "XDG_DATA_HOME": "/tmp/opencode-home/.local/share",
+        "HOME": "/root",
+        "XDG_CONFIG_HOME": "/root/.config",
+        "XDG_DATA_HOME": "/root/.local/share",
     }
     assert container_spec.volumes["notes_assistant_api_opencode_config"].target == PurePosixPath(
-        "/tmp/opencode-home/.config/opencode"
+        "/root/.config/opencode"
     )
     assert container_spec.volumes["notes_assistant_api_opencode_data"].target == PurePosixPath(
-        "/tmp/opencode-home/.local/share/opencode"
+        "/root/.local/share/opencode"
     )
     assert container_spec.command is None
     assert container_spec.ports == {}
+
+
+def test_opencode_persistence_can_persist_only_auth_and_history() -> None:
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodePersistencePluginService(
+                persist_auth=True,
+                persist_chat_history=True,
+                persist_opencode_artifacts=False,
+                persist_skills=False,
+                persist_agents=False,
+            )
+        ]
+    )._prepare_specs()
+
+    assert container_spec.env == {
+        "HOME": "/root",
+        "XDG_CONFIG_HOME": "/root/.config",
+        "XDG_DATA_HOME": "/root/.local/share",
+        "OPENCODE_DB": "/tmp/notes-assistant/opencode-persistence/history/opencode.db",
+    }
+    assert set(container_spec.volumes) == {
+        "notes_assistant_api_opencode_data_auth",
+        "notes_assistant_api_opencode_data_history",
+    }
+    assert container_spec.volumes[
+        "notes_assistant_api_opencode_data_auth"
+    ].target == PurePosixPath("/tmp/notes-assistant/opencode-persistence/auth")
+    assert container_spec.volumes[
+        "notes_assistant_api_opencode_data_history"
+    ].target == PurePosixPath("/tmp/notes-assistant/opencode-persistence/history")
+    assert len(container_spec.startup_tasks) == 1
+    setup_command = container_spec.startup_tasks[0].command[2]
+    assert "auth.json" in setup_command
+    assert "storage" in setup_command
+    assert "AGENTS.md" not in setup_command
+    assert "/skills" not in setup_command
+    assert "/agents" not in setup_command
 
 
 def test_opencode_persistence_post_start_checks_writable_state_dirs() -> None:
@@ -45,8 +83,32 @@ def test_opencode_persistence_post_start_checks_writable_state_dirs() -> None:
     )
 
     assert container.commands
-    assert "/tmp/opencode-home/.config/opencode" in container.commands[0][2]
-    assert "/tmp/opencode-home/.local/share/opencode" in container.commands[0][2]
+    assert "/root/.config/opencode" in container.commands[0][2]
+    assert "/root/.local/share/opencode" in container.commands[0][2]
+
+
+def test_opencode_persistence_post_start_checks_enabled_granular_dirs() -> None:
+    plugin = OpenCodePersistencePluginService(
+        persist_opencode_artifacts=False,
+        persist_skills=False,
+        persist_agents=False,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    container = _RecordingContainer(exit_code=0)
+
+    plugin.post_start(
+        ContainerRuntimeContext(
+            docker_client=object(),
+            container=container,
+            state=container_spec.state,
+        )
+    )
+
+    assert container.commands
+    assert "/tmp/notes-assistant/opencode-persistence/auth" in container.commands[0][2]
+    assert "/tmp/notes-assistant/opencode-persistence/history" in container.commands[0][2]
+    assert "/tmp/notes-assistant/opencode-persistence/skills" not in container.commands[0][2]
+    assert "/tmp/notes-assistant/opencode-persistence/agents" not in container.commands[0][2]
 
 
 def test_opencode_persistence_post_start_fails_when_state_dirs_are_unhealthy() -> None:

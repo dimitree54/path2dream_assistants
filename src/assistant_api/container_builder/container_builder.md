@@ -12,6 +12,7 @@ tags:
 - применяет plugin lifecycle в заданном пользователем порядке;
 - логирует выполнение plugin lifecycle так, чтобы было видно, какой plugin и какой lifecycle stage запускается сейчас;
 - строит Docker image динамически;
+- renders structured image dependency declarations before plugin runtime commands;
 - запускает container через Docker SDK;
 - подготавливает startup tasks и long-running processes, если их зарегистрировали plugins;
 - применяет Docker runtime capabilities, запрошенные plugins;
@@ -69,6 +70,7 @@ class ContainerBuilderService:
 - Plugin lifecycle execution must be logged with the current plugin name and lifecycle stage before each plugin hook starts.
 - Invalid plugin combinations must fail fast with an explicit error.
 - `build_and_run()` must build the Docker image before starting the container.
+- Structured `ImageSpec.apk_packages` and `ImageSpec.python_packages` dependencies must be rendered as de-duplicated Dockerfile install steps before raw `ImageSpec.run_commands`.
 - Startup tasks registered by plugins must run before managed long-running processes.
 - Managed long-running processes registered by plugins must be started by the container entrypoint.
 - A raw `ContainerSpec.command` and managed long-running processes must not conflict silently.

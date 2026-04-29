@@ -43,7 +43,7 @@ class OpenAIProviderLoginPluginService:
         self.opencode_api_port: int | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
-        image.run_commands.append("apk add --no-cache python3")
+        image.apk_packages.append("python3")
         image.run_commands.extend(_install_auth_server_commands())
 
     def configure_container(self, container: ContainerSpec) -> None:

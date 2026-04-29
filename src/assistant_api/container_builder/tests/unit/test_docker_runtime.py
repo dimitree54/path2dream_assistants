@@ -50,6 +50,24 @@ def test_render_dockerfile_clears_base_entrypoint() -> None:
     )
 
 
+def test_render_dockerfile_consolidates_image_dependencies_before_runtime_commands() -> None:
+    dockerfile = render_dockerfile(
+        ImageSpec(
+            apk_packages=["python3", "git", "python3"],
+            python_packages=["fastapi", "uvicorn", "fastapi"],
+            run_commands=["python3 -c 'print(1)'"],
+        )
+    )
+
+    assert dockerfile == (
+        "FROM ghcr.io/anomalyco/opencode\n"
+        "ENTRYPOINT []\n"
+        "RUN apk add --no-cache python3 git\n"
+        "RUN python3 -m pip install --break-system-packages fastapi uvicorn\n"
+        "RUN python3 -c 'print(1)'\n"
+    )
+
+
 def test_run_container_passes_runtime_capabilities_to_docker_sdk() -> None:
     calls = []
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 
-import doppler_env  # noqa
-
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin.google_drive_mount_plugin import (
     GoogleDriveMountPluginService,
@@ -35,6 +33,8 @@ from assistant_api.container_builder.container_plugin.skills_sync_plugin import 
 
 
 def main() -> None:
+    import doppler_env  # noqa: F401
+
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     builder = create_builder()
@@ -56,15 +56,21 @@ def create_builder() -> ContainerBuilderService:
     outbox_port = 8091
     return ContainerBuilderService(
         plugins=[
-            OpenCodePersistencePluginService(),
+            OpenCodePersistencePluginService(
+                persist_auth=True,
+                persist_chat_history=True,
+                persist_opencode_artifacts=False,
+                persist_skills=False,
+                persist_agents=False,
+            ),
             OpenCodeServerPluginService(host_port=host_port),
+            SkillsSyncPluginService(["yid-notes-assistant"]),
             OpenAIProviderLoginPluginService(host_port=openai_auth_port),
             GoogleDrivePersistencePluginService(),
             GoogleDriveMountPluginService(
                 host_port=google_drive_auth_port,
                 drive_folder_name="notes",
             ),
-            SkillsSyncPluginService(["yid-notes-assistant"]),
             InboxUploadPluginService(host_port=inbox_port),
             OutboxDownloadPluginService(host_port=outbox_port),
         ]

@@ -8,6 +8,8 @@ from pathlib import PurePosixPath
 class ImageSpec:
     base_image: str = "ghcr.io/anomalyco/opencode"
     env: dict[str, str] = field(default_factory=dict)
+    apk_packages: list[str] = field(default_factory=list)
+    python_packages: list[str] = field(default_factory=list)
     run_commands: list[str] = field(default_factory=list)
     workdir: PurePosixPath | None = None
     command: list[str] | None = None
