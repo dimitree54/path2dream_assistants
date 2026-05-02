@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,7 +43,7 @@ jobs:
         run: uv sync --frozen --extra test
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest -m "not manual and not live_container"
 
   build:
     name: Build distribution
@@ -51,6 +53,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
