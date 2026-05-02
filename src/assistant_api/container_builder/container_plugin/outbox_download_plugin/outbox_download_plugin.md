@@ -42,6 +42,7 @@ class OutboxDownloadPluginService:
         container_port: int | None = None,
         list_endpoint_path: str = "/api/outbox/list",
         download_endpoint_path: str = "/api/outbox/download",
+        wait_for_mount: bool = False,
     ) -> None:
         pass
 ```
@@ -51,13 +52,16 @@ class OutboxDownloadPluginService:
 - `container_port` — container-local порт outbox HTTP-сервера (если не задан, равен `host_port`);
 - `list_endpoint_path` — путь endpoint для листинга файлов внутри контейнера (по умолчанию `/api/outbox/list`);
 - `download_endpoint_path` — путь endpoint для скачивания файла внутри контейнера (по умолчанию `/api/outbox/download`).
+- `wait_for_mount` — если `False`, сервис fail fast, когда `MountMetadata.container_path` ещё не является mountpoint; если `True`, сервис ждёт mount бесконечно.
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
 During `configure_container`, the service must read `MountMetadata` from the standard mount-aware state, fail fast if absent, and add a managed process for the FastAPI outbox HTTP server. It must not create `outbox` through a startup task. During `configure_image`, the service installs Python 3 and copies the outbox handler script into the container image.
 
-During `post_start`, the service must verify inside the container that the list endpoint can see a probe file, the download endpoint returns that file, and the file is removed after download. If `MountMetadata.source_type` is `remote`, the service must verify the mount is a real mountpoint before endpoint probing, so it cannot silently read from or write into an unmounted local fallback directory.
+During `post_start`, the service must verify inside the container that the list endpoint can see a probe file, the download endpoint returns that file, and the file is removed after download.
+
+`MountMetadata.container_path` must be mounted before the outbox server starts or probes. If `wait_for_mount=False`, the service must fail fast when `container_path` is not a mountpoint. If `wait_for_mount=True`, the service must log a warning and wait indefinitely, periodically checking until `container_path` becomes a mountpoint, before starting the outbox server and before running the outbox probe.
 
 ### List endpoint
 Листинг endpoint поведение (GET-запрос):
@@ -79,7 +83,10 @@ During `post_start`, the service must verify inside the container that the list 
 - Сервис должен требовать `MountMetadata` из стандартного mount-aware state (`MOUNT_METADATA_STATE_KEY`).
 - Сервис должен fail fast, если mount metadata отсутствует — не примонтирована никакая папка.
 - Сервис не должен создавать подпапку `outbox` через container startup task.
-- During `post_start`, the service must fail fast if the outbox endpoints or required mount source are not healthy inside the container.
+- `wait_for_mount` должен default to `False`.
+- If `wait_for_mount=False`, the service must fail fast when `MountMetadata.container_path` is not mounted.
+- If `wait_for_mount=True`, the service must wait indefinitely for `MountMetadata.container_path` to become mounted.
+- During `post_start`, the service must fail fast if the outbox endpoints or configured container path are not healthy inside the container.
 - Outbox endpoints должны работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.

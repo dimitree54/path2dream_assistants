@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import shlex
 from pathlib import Path
 
 from assistant_api.container_builder._errors import ConfigurationError
@@ -24,6 +25,7 @@ class InboxUploadPluginService:
         host_port: int = 8090,
         container_port: int | None = None,
         upload_endpoint_path: str = "/api/inbox/upload",
+        wait_for_mount: bool = False,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.container_port = self._validate_port(
@@ -33,6 +35,7 @@ class InboxUploadPluginService:
         self.upload_endpoint_path = self._validate_upload_endpoint_path(
             upload_endpoint_path
         )
+        self.wait_for_mount = wait_for_mount
         self._container_path: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -54,6 +57,7 @@ class InboxUploadPluginService:
                         container_path=container_path,
                         container_port=self.container_port,
                         upload_endpoint_path=self.upload_endpoint_path,
+                        wait_for_mount=self.wait_for_mount,
                     ),
                 ],
             )
@@ -71,8 +75,7 @@ class InboxUploadPluginService:
                     container_path=container_path,
                     container_port=self.container_port,
                     upload_endpoint_path=self.upload_endpoint_path,
-                    source_type=mount.source_type,
-                    remote_name=mount.remote_name,
+                    wait_for_mount=self.wait_for_mount,
                 ),
             ]
         )
@@ -142,13 +145,43 @@ def _upload_server_command(
     container_path: str,
     container_port: int,
     upload_endpoint_path: str,
+    wait_for_mount: bool,
 ) -> str:
-    return (
-        f"INBOX_CONTAINER_PATH={container_path!r} "
-        f"INBOX_ENDPOINT_PATH={upload_endpoint_path!r} "
-        f"INBOX_PORT={container_port} "
-        f"exec python3 {UPLOAD_HANDLER_PATH}"
+    return "\n".join(
+        [
+            *_mount_gate_lines(container_path, wait_for_mount),
+            (
+                f"INBOX_CONTAINER_PATH={container_path!r} "
+                f"INBOX_ENDPOINT_PATH={upload_endpoint_path!r} "
+                f"INBOX_PORT={container_port} "
+                f"exec python3 {UPLOAD_HANDLER_PATH}"
+            ),
+        ]
     )
+
+
+def _mount_gate_lines(container_path: str, wait_for_mount: bool) -> list[str]:
+    if wait_for_mount:
+        return [
+            "set -eu",
+            f"mount_path={shlex.quote(container_path)}",
+            "attempts=0",
+            'while ! mountpoint -q "$mount_path"; do',
+            '  if [ "$attempts" -eq 0 ] || [ $((attempts % 30)) -eq 0 ]; then',
+            '    printf "Waiting for mounted path: %s\\n" "$mount_path" >&2',
+            "  fi",
+            "  attempts=$((attempts + 1))",
+            "  sleep 1",
+            "done",
+        ]
+    return [
+        "set -eu",
+        f"mount_path={shlex.quote(container_path)}",
+        'if ! mountpoint -q "$mount_path"; then',
+        '  printf "Required mount is not ready: %s\\n" "$mount_path" >&2',
+        "  exit 1",
+        "fi",
+    ]
 
 
 def _upload_health_command(
@@ -156,22 +189,21 @@ def _upload_health_command(
     container_path: str,
     container_port: int,
     upload_endpoint_path: str,
-    source_type: str,
-    remote_name: str | None,
+    wait_for_mount: bool,
 ) -> str:
-    return (
+    return "\n".join(
+        [
+            *_mount_gate_lines(container_path, wait_for_mount),
+            (
         "python3 - <<'PY'\n"
         "import json\n"
         "import os\n"
         "import pathlib\n"
-        "import subprocess\n"
         "import time\n"
         "import urllib.error\n"
         "import urllib.request\n"
         f"container_path = pathlib.Path({container_path!r})\n"
         f"url = 'http://127.0.0.1:{container_port}{upload_endpoint_path}'\n"
-        f"source_type = {source_type!r}\n"
-        f"remote_name = {remote_name!r}\n"
         "filename = f'.notes-assistant-inbox-health-{os.getpid()}.txt'\n"
         "content = b'ok'\n"
         "boundary = 'NotesAssistantHealthBoundary'\n"
@@ -193,10 +225,6 @@ def _upload_health_command(
         "        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},\n"
         "    )\n"
         "    try:\n"
-        "        if source_type == 'remote':\n"
-        "            subprocess.run(['mountpoint', '-q', str(container_path)], check=True)\n"
-        "            if remote_name:\n"
-        "                subprocess.run(['rclone', 'lsf', f'{remote_name}:'], check=True, capture_output=True, text=True)\n"
         "        with urllib.request.urlopen(request, timeout=2) as response:\n"
         "            response_body = response.read().decode('utf-8')\n"
         "            if response.status != 200:\n"
@@ -217,4 +245,6 @@ def _upload_health_command(
         "    time.sleep(1)\n"
         "raise SystemExit(f'inbox upload endpoint did not become healthy: {last_error}')\n"
         "PY"
+            ),
+        ]
     )

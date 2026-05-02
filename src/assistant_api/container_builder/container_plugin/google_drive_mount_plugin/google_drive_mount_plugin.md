@@ -18,7 +18,8 @@ tags:
 - создаёт или переиспользует обычную видимую папку приложения в Google Drive;
 - создаёт rclone config после Google OAuth;
 - запускает `rclone mount`;
-- монтирует эту Google Drive папку в container path, вычисленный из OpenCode runtime state или явно переданный через init;
+- монтирует эту Google Drive папку directly into workspace или в явно настроенный workspace subdirectory/container path;
+- опционально показывает на mounted success page local folder import control для начального заполнения notes;
 - сохраняет `MountMetadata` в стандартный mount-aware state;
 - отдаёт JSON status для проверки login/mount state;
 - не запускает OpenCode;
@@ -44,6 +45,8 @@ class GoogleDriveMountPluginService:
         self,
         host_port: int,
         drive_folder_name: str,
+        workspace_subdir_name: str | None = None,
+        *,
         container_path: PurePosixPath | None = None,
         auth_container_port: int | None = None,
         remote_name: str = "gdrive",
@@ -51,6 +54,7 @@ class GoogleDriveMountPluginService:
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
         oauth_token_url: str = "https://oauth2.googleapis.com/token",
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
+        enable_local_folder_import: bool = False,
     ) -> None:
         pass
 ```
@@ -58,28 +62,38 @@ class GoogleDriveMountPluginService:
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
-When `container_path` is not provided at init time, the service must read standard OpenCode runtime state from `ContainerSpec.state` and derive the mount target as:
+When neither `workspace_subdir_name` nor `container_path` is provided, the service must use `/workspace` as the mount target. The Google Drive `drive_folder_name` configures the Google Drive folder name only and must not create an extra container subdirectory by default.
+
+When `workspace_subdir_name` is provided, the service must derive the mount target as:
 
 ```python
-opencode_runtime.working_dir / drive_folder_name
+PurePosixPath("/workspace") / workspace_subdir_name
 ```
 
-If OpenCode runtime state is missing and no explicit `container_path` was provided, configuration must fail fast.
+If `container_path` is provided, the service must use it as the mount target. `workspace_subdir_name` and `container_path` are mutually exclusive.
+
+If OpenCode runtime state already exists and the resolved Google Drive mount target equals the recorded OpenCode working directory, configuration must fail fast because direct-workspace mounts must be configured before consumers that use that directory.
 
 The Google Drive auth flow must run fully inside the container. The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
 
-When the service composes container startup, it must separate blocking one-shot setup from long-running background processes:
-- required one-shot setup that determines whether the container startup is valid, such as restoring a persisted Google Drive mount before the auth web server becomes available, must be registered as container startup tasks and must complete successfully before the long-running container process tree starts;
-- long-running HTTP/auth serving logic must be registered as managed background processes and must not be modeled as startup tasks that are expected to exit successfully;
-- the service must not hide required blocking mount-restore work inside the long-running auth server process.
+The service must register the Google Drive auth/status/logout/import HTTP server as a managed background process. On startup, that process must restore persisted auth and mount immediately when valid persisted auth exists. If auth is not already available, it must serve `/login` and `/status` without failing; first-time OAuth completes the Google Drive mount only after the user authorizes in the browser.
+
+Consumers that need the configured mount target must choose their own wait-vs-fail behavior. This service publishes auth endpoints and mount metadata, but it does not block container startup until the Google Drive mount is available.
 
 Published endpoints:
 - `GET /login`;
 - `GET /oauth/callback`;
 - `GET /logout`;
-- `GET /status`.
+- `GET /status`;
+- `POST /import/local-folder`, only when local folder import is enabled.
 
 During `post_start`, the service must wait until its container-local `/status` endpoint is reachable and not in `error` state. If persisted auth for the configured remote exists, `post_start` must also verify `mounted=true`, `authValid=true`, mountpoint health, remote readability, and mount filesystem usability.
+
+When `enable_local_folder_import=True`, the mounted success page must expose a guided import notes panel for initial notes population. This panel must let the user choose either individual local files or a local folder. Individual files are imported into the mounted Google Drive folder root. Folder import must upload all regular files recursively.
+
+For folder import, the default UI mode is `Create selected folder`, so selecting `MyNotes` imports files under `MyNotes/...`. The UI must also offer `Import folder contents`, so the selected folder's first path segment is stripped before upload and files are copied directly under the mounted folder root. Imported files must be copied through the container filesystem, so `rclone mount` uploads them to Google Drive on behalf of the app.
+
+Local folder import must only accept requests when Google Drive is already authenticated, mounted, and healthy. If local folder import is disabled or Google Drive is not mounted, import requests must fail clearly. If any target path already exists in the mounted folder, the import must fail with a user-visible error; it must not overwrite or auto-rename existing files. Import must reject absolute paths, path traversal, empty relative paths, and other unsafe submitted relative paths. Google Drive file or folder chooser import is not part of this service version and must not be exposed through the UI or public init API.
 
 # Google Drive access model
 Сервис использует intermediate Google Drive access level:
@@ -104,14 +118,23 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - The service must not require `GOOGLE_DRIVE_AUTH_PORT` from environment variables.
 - The service must accept Google Drive folder name through init-time configuration as `drive_folder_name`.
 - The service must not require `GOOGLE_DRIVE_MOUNT_FOLDER_NAME` from environment variables.
-- If `container_path` is omitted, the service must derive mount target from standard OpenCode runtime state as `working_dir / drive_folder_name`.
-- If `container_path` is omitted and OpenCode runtime state is missing, the service must fail fast.
+- By default the service must mount the configured Google Drive folder directly into `/workspace`.
+- If `workspace_subdir_name` is provided, the service must mount into `/workspace/<workspace_subdir_name>`.
+- `workspace_subdir_name` must be one safe directory name: not empty, not absolute, not nested, and not `.` or `..`.
+- `workspace_subdir_name` and `container_path` are mutually exclusive.
 - If `container_path` is provided, the service must use it as the mount target without requiring OpenCode runtime state.
+- If OpenCode runtime state already exists and the resolved mount target is the OpenCode working directory, the service must fail fast with an ordering error.
+- The service must not register a blocking startup task for first-time Google Drive OAuth.
+- The service must register the Google Drive auth/status/logout/import server as a managed process.
+- The managed server must restore and verify a persisted mount when valid persisted auth exists.
+- The managed server must serve `/login` and `/status` while unauthenticated instead of failing container startup.
+- First-time OAuth must mount Google Drive only after the user completes browser authorization.
 - The default rclone remote name must be `gdrive`.
 - The service must require `GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON`.
 - OAuth authorize and token endpoints must be configurable at init time and default to Google OAuth endpoints.
 - Custom OAuth endpoints must be sufficient for the full OAuth flow, so local OAuth-compatible providers can be used without live Google OAuth.
 - Google Drive API base URL must be configurable at init time and default to `https://www.googleapis.com/drive/v3`.
+- Local folder import must be disabled by default and configurable at init time as `enable_local_folder_import`.
 - The service must request the minimum Google Drive OAuth scopes that support the visible app-owned folder use case.
 - The default Google Drive OAuth scope must be `https://www.googleapis.com/auth/drive.file`.
 - The service must not request full-drive scopes such as `https://www.googleapis.com/auth/drive`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.metadata`, or `https://www.googleapis.com/auth/drive.metadata.readonly`.
@@ -127,6 +150,22 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - `GET /oauth/callback` must complete the OAuth redirect flow.
 - After a successful `GET /oauth/callback`, the service must return a production-ready Pet Project Cofounder branded HTML success page using the shared repository style asset. The page must explain that Google Drive was mounted successfully and that the user can proceed to using the Assistant.
 - The mounted success page must provide a visible logout button that calls `/logout`.
+- When local folder import is enabled, the mounted success page must provide a visible local folder import control for recursive initial notes import.
+- When local folder import is disabled, `/login` and the mounted success page must not render local folder import UI.
+- The local folder import UI must guide the user with clear empty, selected, uploading, finalizing, success, and error messages.
+- The local folder import UI must keep the import button disabled until the user selects at least one file.
+- The local folder import UI must allow the user to choose different files or a different folder after selection, success, or error.
+- The local folder import UI must support both individual file selection and recursive folder selection.
+- The local folder import UI must show a folder placement toggle after folder selection only; the default must create the selected folder, and the alternate mode must import the selected folder contents directly.
+- The local folder import control must submit files to `POST /import/local-folder` as `multipart/form-data` and preserve each chosen target path in each file part's relative filename.
+- `POST /import/local-folder` must copy all submitted regular files into the mounted folder root, preserving relative paths.
+- `POST /import/local-folder` must create needed subdirectories for imported relative paths.
+- `POST /import/local-folder` must fail clearly when Google Drive is not authenticated, not mounted, or not healthy.
+- `POST /import/local-folder` must fail clearly when local folder import is disabled.
+- `POST /import/local-folder` must fail clearly if any submitted file would overwrite an existing path in the mounted folder.
+- `POST /import/local-folder` must not overwrite existing files and must not auto-rename conflicting files.
+- `POST /import/local-folder` must reject path traversal, absolute paths, empty relative paths, and unsafe submitted relative paths.
+- `POST /import/local-folder` must not import arbitrary files or folders from Google Drive; v1 supports only local folder import from the user's browser.
 - `/logout` must stop the active Google Drive mount, remove stored Google Drive auth and rclone config for this container state, return the service to unauthenticated state, and render the production-ready Google Drive login page instead of plain text.
 - `/status` must return JSON with at least `authValid`, `mounted`, `state`, and `message`.
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
@@ -149,13 +188,12 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - The service must fail fast instead of silently using a local directory when Google Drive is not mounted.
 - The service must not expose or depend on local host directory mounts.
 - The service must not configure OpenCode persistence.
-- Required persisted-mount restore work must fail container startup immediately when it fails; it must not allow the container to keep running with the Google Drive auth endpoint missing or dead.
-- When persisted Google Drive auth exists and mount restore is required before serving browser auth endpoints, that restore step must run as blocking startup work, not as part of the long-running auth HTTP process.
-- The long-running Google Drive auth HTTP server must start only after required blocking startup work for this plugin has completed successfully.
-- The service must fail fast if persisted auth exists but the restored Google Drive mount is not healthy inside the container.
+- When persisted auth exists, restore failures must make the managed auth server unhealthy and must be reported through `post_start`.
+- When no persisted auth exists, unauthenticated status is healthy for this plugin; mount consumers decide whether to wait or fail.
 - Manual live contract tests for this service must run as `pytest.mark.manual` and use a real container, real OAuth login, and real `rclone mount`.
 - Manual live contract tests for this service must compose [[../google_drive_persistence_plugin/google_drive_persistence_plugin.md|GoogleDrivePersistencePluginService]] so auth state survives container recreation during the test run.
-- Manual live contract tests for this service must verify that `/workspace/project/test.md` exists in the mounted folder root and its content is exactly `zebra`.
+- Manual live contract tests for this service must verify that `/workspace/test.md` exists in the mounted folder root and its content is exactly `zebra`.
+- Manual live contract tests for this service must verify that enabled local folder import recursively copies files into the mounted folder root while preserving relative paths.
 - Manual live contract tests for this service must clean only test-created subdirectories in the mounted folder and must call `/logout` at the end of the manual run.
 
 ## Sub-services

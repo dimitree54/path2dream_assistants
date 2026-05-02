@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
@@ -13,6 +15,7 @@ from openai_provider_login_contract_helpers import (
     start_plugin,
     status_json,
     status_response,
+    write_openai_oauth_auth,
 )
 from openai_provider_stub import (
     OpenAIProviderEnv,
@@ -20,6 +23,11 @@ from openai_provider_stub import (
     openai_provider_env,
     opencode_provider_stub,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_opencode_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
 
 
 def test_startup_fails_when_opencode_server_is_unavailable(
@@ -83,7 +91,7 @@ def test_status_reports_required_json_shape_when_openai_is_not_connected(
     assert isinstance(status["message"], str)
 
 
-def test_status_reports_authenticated_when_openai_provider_is_connected(
+def test_status_does_not_report_authenticated_when_provider_is_only_connected(
     openai_provider_env: OpenAIProviderEnv,
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
@@ -97,9 +105,31 @@ def test_status_reports_authenticated_when_openai_provider_is_connected(
     status = status_json(port=openai_provider_env.openai_auth_port)
 
     assert status["providerName"] == "OpenAI"
+    assert status["authValid"] is False
+    assert status["state"] == "unauthenticated"
+    assert status["state"] in VALID_STATUS_STATES
+
+
+def test_status_reports_authenticated_when_openai_oauth_credentials_exist(
+    openai_provider_env: OpenAIProviderEnv,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_home = tmp_path / "share"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    write_openai_oauth_auth(data_home)
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
+    start_plugin(plugin, container_spec.state)
+
+    status = status_json(port=openai_provider_env.openai_auth_port)
+
+    assert status["providerName"] == "OpenAI"
     assert status["authValid"] is True
     assert status["state"] == "authenticated"
-    assert status["state"] in VALID_STATUS_STATES
+    assert "oauth" in status["message"]
 
 
 def test_later_opencode_outage_reports_unavailable_json(

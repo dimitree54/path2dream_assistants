@@ -48,7 +48,7 @@ def test_manual_live_mount_exposes_expected_preexisting_root_file(
         context="mountpoint verification",
     )
     file_body = live_runtime.exec_text(
-        ["/bin/sh", "-lc", "cat /workspace/project/test.md"],
+        ["/bin/sh", "-lc", "cat /workspace/test.md"],
         context="read pre-existing Drive root file",
     )
     assert file_body == "zebra"
@@ -178,6 +178,54 @@ def test_manual_live_mount_syncs_local_write_to_drive_remote(
         live_runtime.exec_text(
             ["/bin/sh", "-lc", f"test ! -e {shlex.quote(str(mount_dir))}"],
             context="verify cleanup for sync test directory",
+        )
+
+
+@pytest.mark.manual
+def test_manual_live_local_folder_import_recursively_populates_mounted_root(
+    live_runtime: LiveGoogleDriveMountRuntime,
+) -> None:
+    live_runtime.wait_for_mounted_status(timeout_seconds=300)
+    relative_dir = unique_relative_dir("local-folder-import")
+    root_relative_file = f"{relative_dir}/root.md"
+    nested_relative_file = f"{relative_dir}/nested/deep.md"
+    mount_dir = MOUNT_PATH / relative_dir
+    try:
+        live_runtime.post_local_folder_import(
+            {
+                root_relative_file: b"root import",
+                nested_relative_file: b"nested import",
+            }
+        )
+
+        assert (
+            live_runtime.exec_text(
+                ["/bin/sh", "-lc", f"cat {shlex.quote(str(MOUNT_PATH / root_relative_file))}"],
+                context="read imported root file",
+            )
+            == "root import"
+        )
+        assert (
+            live_runtime.exec_text(
+                [
+                    "/bin/sh",
+                    "-lc",
+                    f"cat {shlex.quote(str(MOUNT_PATH / nested_relative_file))}",
+                ],
+                context="read imported nested file",
+            )
+            == "nested import"
+        )
+        wait_for_remote_file_content(
+            live_runtime,
+            relative_path=nested_relative_file,
+            expected_content="nested import",
+            timeout_seconds=240,
+        )
+    finally:
+        live_runtime.exec_text(
+            ["/bin/sh", "-lc", f"rm -rf {shlex.quote(str(mount_dir))}"],
+            context="cleanup local folder import test directory",
         )
 
 

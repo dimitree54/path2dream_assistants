@@ -7,7 +7,6 @@ from .container_builder_service import ContainerBuilderService
 from .container_plugin.local_dir_mount_plugin import LocalDirMountPluginService
 from .container_plugin.opencode_persistence_plugin import OpenCodePersistencePluginService
 from .container_plugin.opencode_web_server_plugin import OpenCodeWebServerPluginService
-from .container_plugin.sync_mount_dir_name_plugin import SyncMountDirNamePluginService
 
 
 def main() -> None:
@@ -16,7 +15,6 @@ def main() -> None:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--mount-dir", type=Path)
-    run_parser.add_argument("--sync-mount-dir-name", action="store_true")
     run_parser.add_argument("--persist-opencode", action="store_true")
     run_parser.add_argument("--opencode-web", action="store_true")
     run_parser.add_argument("--port", type=int, default=4096)
@@ -28,8 +26,6 @@ def main() -> None:
         plugins = []
         if args.mount_dir is not None:
             plugins.append(LocalDirMountPluginService(args.mount_dir))
-        if args.sync_mount_dir_name:
-            plugins.append(SyncMountDirNamePluginService())
         if args.persist_opencode:
             plugins.append(OpenCodePersistencePluginService())
         if args.opencode_web:

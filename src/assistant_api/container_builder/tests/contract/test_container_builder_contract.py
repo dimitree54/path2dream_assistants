@@ -14,9 +14,6 @@ from assistant_api.container_builder.container_plugin.opencode_persistence_plugi
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
-from assistant_api.container_builder.container_plugin.sync_mount_dir_name_plugin import (
-    SyncMountDirNamePluginService,
-)
 from assistant_api.models import ContainerSpec, ImageSpec
 
 
@@ -164,14 +161,14 @@ def test_full_plugin_composition_uses_public_services(tmp_path: Path) -> None:
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[
             LocalDirMountPluginService(tmp_path),
-            SyncMountDirNamePluginService(),
             OpenCodePersistencePluginService(),
             OpenCodeWebServerPluginService(host_port=4097),
         ]
     )._prepare_specs()
 
-    assert container_spec.volumes[str(tmp_path)].target.as_posix() == "/workspace/mounted-source"
-    assert container_spec.working_dir.as_posix() == "/workspace/workdir"
+    assert container_spec.volumes[str(tmp_path)].target.as_posix() == "/workspace"
+    assert container_spec.working_dir.as_posix() == "/workspace"
     assert container_spec.ports == {4096: 4097}
     assert container_spec.env["HOME"] == "/root"
-    assert container_spec.command[:2] == ["opencode", "web"]
+    assert container_spec.command is not None
+    assert "opencode web" in container_spec.command[2]

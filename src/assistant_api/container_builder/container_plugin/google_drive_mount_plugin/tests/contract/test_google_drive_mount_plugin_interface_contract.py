@@ -10,15 +10,11 @@ from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin import (
     MOUNT_METADATA_STATE_KEY,
-    OPENCODE_RUNTIME_STATE_KEY,
 )
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
-from assistant_api.container_builder.container_plugin.google_drive_persistence_plugin import (
-    GoogleDrivePersistencePluginService,
-)
-from assistant_api.models import ContainerRuntimeContext, MountMetadata, OpenCodeRuntimeMetadata
+from assistant_api.models import ContainerRuntimeContext, MountMetadata
 from google_drive_mount_contract_helpers import REQUIRED_ENV, auth_port, service_class, unused_port
 from google_drive_mount_oauth_stub import google_env
 
@@ -29,6 +25,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
     assert list(signature.parameters) == [
         "host_port",
         "drive_folder_name",
+        "workspace_subdir_name",
         "container_path",
         "auth_container_port",
         "remote_name",
@@ -36,9 +33,11 @@ def test_public_service_import_and_init_signature_defaults() -> None:
         "oauth_authorize_url",
         "oauth_token_url",
         "drive_api_base_url",
+        "enable_local_folder_import",
     ]
     assert signature.parameters["host_port"].default is inspect.Parameter.empty
     assert signature.parameters["drive_folder_name"].default is inspect.Parameter.empty
+    assert signature.parameters["workspace_subdir_name"].default is None
     assert signature.parameters["container_path"].default is None
     assert signature.parameters["auth_container_port"].default is None
     assert signature.parameters["remote_name"].default == "gdrive"
@@ -55,6 +54,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
         signature.parameters["drive_api_base_url"].default
         == "https://www.googleapis.com/drive/v3"
     )
+    assert signature.parameters["enable_local_folder_import"].default is False
 
 
 @pytest.mark.parametrize("missing_env", REQUIRED_ENV)
@@ -148,6 +148,7 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     assert "python3" in image_spec.apk_packages
     assert any("/workspace/project" in command for command in image_spec.run_commands)
     assert "assets/petprojectcofounder_login_page.css" in install_commands
+    assert "_local_folder_import_control.py" in install_commands
     assert container_spec.ports == {host_port: host_port}
     assert container_spec.volumes == {}
     assert container_spec.command is None
@@ -169,31 +170,68 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     assert mount.mode == "rw"
 
 
-def test_prepare_specs_derives_mount_path_from_opencode_runtime_state(
+def test_prepare_specs_mounts_directly_to_workspace_by_default(
     google_env: str,
 ) -> None:
     host_port = auth_port()
     plugin = service_class()(host_port=host_port, drive_folder_name=google_env)
 
-    _image_spec, container_spec = ContainerBuilderService(
-        plugins=[OpenCodeWebServerPluginService(host_port=4097), plugin]
-    )._prepare_specs()
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
 
-    opencode_runtime = container_spec.state[OPENCODE_RUNTIME_STATE_KEY]
     mount = container_spec.state[MOUNT_METADATA_STATE_KEY]
-    assert isinstance(opencode_runtime, OpenCodeRuntimeMetadata)
     assert isinstance(mount, MountMetadata)
-    assert opencode_runtime.working_dir == PurePosixPath("/workspace")
-    assert mount.container_path == PurePosixPath("/workspace") / google_env
+    assert mount.container_path == PurePosixPath("/workspace")
 
 
-def test_prepare_specs_requires_opencode_runtime_state_when_container_path_is_omitted(
+def test_prepare_specs_supports_workspace_subdir_name(
+    google_env: str,
+) -> None:
+    plugin = service_class()(
+        host_port=auth_port(),
+        drive_folder_name=google_env,
+        workspace_subdir_name="notes",
+    )
+
+    image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    mount = container_spec.state[MOUNT_METADATA_STATE_KEY]
+    assert isinstance(mount, MountMetadata)
+    assert mount.container_path == PurePosixPath("/workspace/notes")
+    assert any("/workspace/notes" in command for command in image_spec.run_commands)
+
+
+@pytest.mark.parametrize("workspace_subdir_name", ["", " ", ".", "..", "/notes", "nested/notes", "nested\\notes"])
+def test_init_rejects_invalid_workspace_subdir_name(
+    google_env: str,
+    workspace_subdir_name: str,
+) -> None:
+    with pytest.raises(ConfigurationError, match="workspace_subdir_name"):
+        service_class()(
+            host_port=auth_port(),
+            drive_folder_name=google_env,
+            workspace_subdir_name=workspace_subdir_name,
+        )
+
+
+def test_init_rejects_workspace_subdir_name_with_container_path(google_env: str) -> None:
+    with pytest.raises(ConfigurationError, match="mutually exclusive"):
+        service_class()(
+            host_port=auth_port(),
+            drive_folder_name=google_env,
+            workspace_subdir_name="notes",
+            container_path=PurePosixPath("/workspace/project"),
+        )
+
+
+def test_prepare_specs_fails_when_direct_workspace_mount_is_configured_after_opencode(
     google_env: str,
 ) -> None:
     plugin = service_class()(host_port=auth_port(), drive_folder_name=google_env)
 
-    with pytest.raises(ConfigurationError, match="OpenCode runtime metadata"):
-        ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    with pytest.raises(ConfigurationError, match="configured before OpenCode"):
+        ContainerBuilderService(
+            plugins=[OpenCodeWebServerPluginService(host_port=4097), plugin]
+        )._prepare_specs()
 
 
 def test_google_drive_auth_runs_as_composable_managed_process(google_env: str) -> None:
@@ -210,7 +248,7 @@ def test_google_drive_auth_runs_as_composable_managed_process(google_env: str) -
     assert any("GOOGLE_DRIVE_AUTH_PORT" in repr(process) for process in managed_processes)
 
 
-def test_prepare_specs_registers_blocking_restore_startup_task_when_persistence_is_composed(
+def test_prepare_specs_registers_managed_auth_process_without_startup_task(
     google_env: str,
 ) -> None:
     plugin = service_class()(
@@ -219,13 +257,9 @@ def test_prepare_specs_registers_blocking_restore_startup_task_when_persistence_
         container_path=PurePosixPath("/workspace/project"),
     )
 
-    _image_spec, container_spec = ContainerBuilderService(
-        plugins=[GoogleDrivePersistencePluginService(), plugin]
-    )._prepare_specs()
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
 
-    assert container_spec.startup_tasks, (
-        "Google Drive mount restore must be modeled as blocking startup work when persistence is composed"
-    )
+    assert container_spec.startup_tasks == []
     assert any("GOOGLE_DRIVE_AUTH_PORT" in repr(process) for process in container_spec.managed_processes)
 
 
@@ -270,6 +304,7 @@ def test_post_start_does_not_start_host_side_auth_server(
 
     assert container.commands
     assert "/status" in container.commands[0][2]
+    assert "elif isinstance(payload.get('state'), str)" in container.commands[0][2]
 
 
 def test_post_start_fails_when_google_drive_status_is_unhealthy(

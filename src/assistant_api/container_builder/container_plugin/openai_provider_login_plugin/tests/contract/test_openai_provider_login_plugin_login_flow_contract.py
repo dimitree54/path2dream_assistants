@@ -15,6 +15,7 @@ from openai_provider_login_contract_helpers import (
     start_plugin,
     status_json,
     wait_for_status_state,
+    write_openai_oauth_auth,
 )
 from openai_provider_stub import (
     OpenAIProviderEnv,
@@ -29,6 +30,11 @@ PENDING_STATUS_MESSAGE = (
     "Use the button above to open OpenAI authorization, enter the device code, "
     "and finish the flow. This page will update automatically."
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_opencode_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
 
 
 def test_login_selects_headless_openai_oauth_method_and_renders_user_code(
@@ -132,6 +138,7 @@ def test_automatic_headless_callback_completion_reports_authenticated(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
     plugin = service_class()(
         host_port=openai_provider_env.openai_auth_port,
         opencode_model="openai/gpt-5.5-fast",
@@ -200,7 +207,12 @@ def test_repeated_login_while_auth_is_pending_does_not_duplicate_authorize_calls
 def test_login_when_already_authenticated_does_not_restart_oauth(
     openai_provider_env: OpenAIProviderEnv,
     opencode_provider_stub: OpenCodeProviderStub,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    data_home = tmp_path / "share"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    write_openai_oauth_auth(data_home)
     opencode_provider_stub.state.connected = True
     plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
     _image_spec, container_spec = ContainerBuilderService(

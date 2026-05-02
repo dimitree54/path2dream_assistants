@@ -78,9 +78,8 @@ def test_mount_plugin_restores_valid_persisted_auth_without_browser_login(
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[persistence_plugin, mount_plugin]
     )._prepare_specs()
-    assert container_spec.startup_tasks, (
-        "Persisted Google Drive restore must run as blocking startup work before auth serving"
-    )
+    assert container_spec.startup_tasks == []
+    assert any(process.name == "google-drive-mount" for process in container_spec.managed_processes)
     for name, value in container_spec.env.items():
         monkeypatch.setenv(name, value)
 

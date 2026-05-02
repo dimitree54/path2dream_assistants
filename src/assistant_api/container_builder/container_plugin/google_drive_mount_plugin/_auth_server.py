@@ -11,6 +11,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from email import policy
+from email.parser import BytesParser
 from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -36,6 +38,14 @@ class GoogleDriveMountAuthError(RuntimeError):
     pass
 
 
+class LocalFolderImportPathError(RuntimeError):
+    pass
+
+
+class LocalFolderImportConflictError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class OAuthCredentials:
     client_id: str
@@ -55,6 +65,7 @@ class GoogleDriveMountAuthServer:
         oauth_token_url: str,
         drive_api_base_url: str,
         credentials_json: str,
+        enable_local_folder_import: bool = False,
     ) -> None:
         self.auth_port = auth_port
         self.host_port = host_port
@@ -65,6 +76,7 @@ class GoogleDriveMountAuthServer:
         self.oauth_token_url = oauth_token_url
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
         self.credentials = _credentials_from_json(credentials_json)
+        self.enable_local_folder_import = enable_local_folder_import
         self._server: ThreadingHTTPServer | None = None
         self._state: GoogleDriveMountState = "unauthenticated"
         self._message = "Google Drive is not authenticated."
@@ -75,7 +87,7 @@ class GoogleDriveMountAuthServer:
         self.remote_folder_id: str | None = None
 
     def serve_forever(self, bind_host: str) -> None:
-        self._load_existing_mount_state()
+        self._initialize_mount_state()
         self._server = ThreadingHTTPServer((bind_host, self.auth_port), google_drive_mount_handler_class())
         self._server.plugin = self  # type: ignore[attr-defined]
         self._server.serve_forever()
@@ -83,7 +95,7 @@ class GoogleDriveMountAuthServer:
     def start_in_thread(self, bind_host: str) -> None:
         import threading
 
-        self._load_existing_mount_state()
+        self._initialize_mount_state()
         self._server = ThreadingHTTPServer((bind_host, self.auth_port), google_drive_mount_handler_class())
         self._server.plugin = self  # type: ignore[attr-defined]
         thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -92,12 +104,28 @@ class GoogleDriveMountAuthServer:
     def restore_persisted_mount(self) -> None:
         self._restore_persisted_mount()
 
+    def _initialize_mount_state(self) -> None:
+        try:
+            self._load_existing_mount_state()
+            if self._mounted or self._state == "error":
+                return
+            self._restore_persisted_mount()
+        except GoogleDriveMountAuthError as error:
+            self._set_error(str(error))
+
     def _login(self) -> tuple[int, str, str]:
         return self._login_page_response(mark_authenticating=True)
 
     def _login_page_response(self, *, mark_authenticating: bool) -> tuple[int, str, str]:
         if self._mounted:
-            return 200, "text/html; charset=utf-8", render_mount_success_page(self.folder_name)
+            return (
+                200,
+                "text/html; charset=utf-8",
+                render_mount_success_page(
+                    self.folder_name,
+                    enable_local_folder_import=self.enable_local_folder_import,
+                ),
+            )
         if mark_authenticating:
             self._state = "authenticating"
             self._message = "Waiting for Google Drive authorization."
@@ -143,7 +171,14 @@ class GoogleDriveMountAuthServer:
         self._state = "mounted"
         self._mounted = True
         self._message = "Google Drive is mounted."
-        return 200, "text/html; charset=utf-8", render_mount_success_page(self.folder_name)
+        return (
+            200,
+            "text/html; charset=utf-8",
+            render_mount_success_page(
+                self.folder_name,
+                enable_local_folder_import=self.enable_local_folder_import,
+            ),
+        )
 
     def _logout(self) -> tuple[int, str, str]:
         subprocess.run(["rclone", "unmount", str(self.container_path)], check=False)
@@ -169,6 +204,50 @@ class GoogleDriveMountAuthServer:
                 }
             ),
         )
+
+    def _import_local_folder(self, content_type: str, body: bytes) -> tuple[int, str, str]:
+        if not self.enable_local_folder_import:
+            return 404, "text/plain; charset=utf-8", "Local folder import is disabled."
+        if not self._mounted or not self._auth_valid:
+            return 409, "text/plain; charset=utf-8", "Google Drive must be mounted before import."
+        try:
+            self._verify_mount_health()
+            files = _local_folder_import_files(content_type, body)
+            targets = self._preflight_local_folder_import(files)
+            for target, content in targets:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+        except LocalFolderImportPathError as error:
+            return 400, "text/plain; charset=utf-8", str(error)
+        except LocalFolderImportConflictError as error:
+            return 409, "text/plain; charset=utf-8", str(error)
+        except GoogleDriveMountAuthError as error:
+            return 409, "text/plain; charset=utf-8", f"Google Drive mount is not healthy: {error}"
+        except OSError as error:
+            return 500, "text/plain; charset=utf-8", f"Local folder import failed: {error}"
+        return 200, "text/plain; charset=utf-8", "Local folder import completed."
+
+    def _preflight_local_folder_import(
+        self,
+        files: list[tuple[str, bytes]],
+    ) -> list[tuple[Path, bytes]]:
+        root = Path(self.container_path)
+        root_resolved = root.resolve()
+        targets: list[tuple[Path, bytes]] = []
+        seen: set[Path] = set()
+        for relative_path, content in files:
+            target = _safe_local_import_target(root, root_resolved, relative_path)
+            if target in seen:
+                raise LocalFolderImportConflictError(f"Import path is duplicated: {relative_path}")
+            seen.add(target)
+            if target.exists():
+                raise LocalFolderImportConflictError(
+                    f"Import target already exists: {relative_path}"
+                )
+            targets.append((target, content))
+        for target, _content in targets:
+            _verify_local_import_parent_paths(root, target, seen)
+        return targets
 
     def _exchange_code(self, code: str) -> dict[str, Any]:
         data = urllib.parse.urlencode(
@@ -331,10 +410,7 @@ class GoogleDriveMountAuthServer:
         self._verify_remote_readable()
 
     def _restore_persisted_mount(self) -> None:
-        config = os.environ.get("RCLONE_CONFIG")
-        if not config:
-            return
-        config_path = Path(config)
+        config_path = _rclone_config_path()
         if config_path.parent.exists() and not config_path.parent.is_dir():
             raise GoogleDriveMountAuthError("persisted rclone config path parent is not a directory")
         if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
@@ -350,10 +426,7 @@ class GoogleDriveMountAuthServer:
         self._message = "Google Drive is mounted."
 
     def _load_existing_mount_state(self) -> None:
-        config = os.environ.get("RCLONE_CONFIG")
-        if not config:
-            return
-        config_path = Path(config)
+        config_path = _rclone_config_path()
         if config_path.parent.exists() and not config_path.parent.is_dir():
             raise GoogleDriveMountAuthError("persisted rclone config path parent is not a directory")
         if not config_path.exists() or f"[{self.remote_name}]" not in config_path.read_text(encoding="utf-8"):
@@ -387,7 +460,7 @@ class GoogleDriveMountAuthServer:
         if "Invalid Credentials" not in error_message:
             return False
         config_path = _rclone_config_path()
-        if config_path is None or not config_path.exists():
+        if not config_path.exists():
             return False
         config_text = config_path.read_text(encoding="utf-8")
         normalized = _normalize_rclone_config_token(
@@ -430,6 +503,66 @@ def _credentials_from_json(raw: str) -> OAuthCredentials:
     if not isinstance(client_secret, str) or not client_secret:
         raise GoogleDriveMountAuthError("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON must contain web.client_secret")
     return OAuthCredentials(client_id=client_id, client_secret=client_secret)
+
+
+def _local_folder_import_files(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
+    if "multipart/form-data" not in content_type.lower():
+        raise LocalFolderImportPathError("Local folder import requires multipart/form-data.")
+    message = BytesParser(policy=policy.default).parsebytes(
+        b"Content-Type: " + content_type.encode("utf-8") + b"\r\nMIME-Version: 1.0\r\n\r\n" + body
+    )
+    if not message.is_multipart():
+        raise LocalFolderImportPathError("Local folder import requires multipart file parts.")
+    files: list[tuple[str, bytes]] = []
+    for part in message.iter_parts():
+        if part.get_content_disposition() != "form-data":
+            continue
+        if part.get_param("name", header="content-disposition") != "files":
+            continue
+        filename = part.get_filename()
+        if filename is None:
+            raise LocalFolderImportPathError("Local folder import file path is missing.")
+        payload = part.get_payload(decode=True)
+        files.append((filename, payload if payload is not None else b""))
+    if not files:
+        raise LocalFolderImportPathError("Local folder import requires at least one file path.")
+    return files
+
+
+def _safe_local_import_target(root: Path, root_resolved: Path, relative_path: str) -> Path:
+    if not relative_path:
+        raise LocalFolderImportPathError("Local folder import path must not be empty.")
+    if "\\" in relative_path:
+        raise LocalFolderImportPathError(f"Local folder import path is unsafe: {relative_path}")
+    pure_path = PurePosixPath(relative_path)
+    if pure_path.is_absolute():
+        raise LocalFolderImportPathError(f"Local folder import path must be relative: {relative_path}")
+    parts = relative_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise LocalFolderImportPathError(f"Local folder import path is unsafe: {relative_path}")
+    target = root.joinpath(*parts)
+    try:
+        target.resolve(strict=False).relative_to(root_resolved)
+    except ValueError as error:
+        raise LocalFolderImportPathError(
+            f"Local folder import path escapes mounted root: {relative_path}"
+        ) from error
+    return target
+
+
+def _verify_local_import_parent_paths(root: Path, target: Path, imported_targets: set[Path]) -> None:
+    relative_parent = target.parent.relative_to(root)
+    current = root
+    for part in relative_parent.parts:
+        current = current / part
+        if current in imported_targets:
+            raise LocalFolderImportConflictError(
+                f"Import target already exists as a file path: {current.relative_to(root)}"
+            )
+        if current.exists() and not current.is_dir():
+            raise LocalFolderImportConflictError(
+                f"Import target parent already exists as a file: {current.relative_to(root)}"
+            )
 
 
 def _rclone_token_from_oauth_token(token: dict[str, Any] | None) -> dict[str, Any]:
@@ -527,10 +660,10 @@ def _rclone_token_from_persisted_token(
     return rclone_token
 
 
-def _rclone_config_path() -> Path | None:
+def _rclone_config_path() -> Path:
     config = os.environ.get("RCLONE_CONFIG")
     if not config:
-        return None
+        return Path.home() / ".config" / "rclone" / "rclone.conf"
     return Path(config)
 
 
@@ -552,6 +685,17 @@ def _required_port_env(name: str) -> int:
     return port
 
 
+def _optional_bool_env(name: str) -> bool:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return False
+    if value == "1":
+        return True
+    if value == "0":
+        return False
+    raise GoogleDriveMountAuthError(f"{name} must be 1 or 0")
+
+
 def main() -> None:
     try:
         parser = argparse.ArgumentParser()
@@ -567,6 +711,9 @@ def main() -> None:
             oauth_token_url=_required_env("GOOGLE_DRIVE_OAUTH_TOKEN_URL"),
             drive_api_base_url=_required_env("GOOGLE_DRIVE_API_BASE_URL"),
             credentials_json=_required_env("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON"),
+            enable_local_folder_import=_optional_bool_env(
+                "GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT"
+            ),
         )
         if args.restore_persisted_mount:
             server.restore_persisted_mount()

@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Literal
 
 if __package__:
@@ -135,10 +136,13 @@ class OpenAIProviderAuthServer:
             self._callback_lock.release()
         if result is True:
             configure_default_model(self.opencode_model)
-            self._auth_valid = True
-            self._state = "authenticated"
-            self._message = "OpenAI provider is authenticated."
             self._pending_authorize = None
+            status = self._status_payload()
+            if status["authValid"] is not True:
+                self._set_error(
+                    "OpenAI authorization completed, but OpenCode auth credentials were not stored."
+                )
+                return False
         else:
             self._message = "Waiting for OpenAI provider authorization."
         return True
@@ -161,17 +165,17 @@ class OpenAIProviderAuthServer:
         provider_payload = self._request_json(
             "GET", "/provider", "OpenCode provider status is unavailable"
         )
-        connected = provider_payload.get("connected")
-        auth_valid = self._auth_valid or (isinstance(connected, list) and PROVIDER_ID in connected)
-        self._auth_valid = auth_valid
-        if auth_valid:
+        self._find_openai_provider(provider_payload)
+        auth_method = _openai_auth_method()
+        self._auth_valid = auth_method is not None
+        if self._auth_valid:
             self._state = "authenticated"
-            self._message = "OpenAI provider is authenticated."
+            self._message = f"OpenAI provider is authenticated through OpenCode {auth_method} credentials."
             self._pending_authorize = None
         elif self._state != "error":
             self._state = "unauthenticated"
             if self._pending_authorize is None:
-                self._message = "OpenAI provider is not authenticated."
+                self._message = "OpenAI provider auth credentials are missing from OpenCode auth storage."
         return {
             "authValid": self._auth_valid,
             "state": self._state,
@@ -294,6 +298,64 @@ def required_port_env(name: str) -> int:
     if port < 1 or port > 65535:
         raise OpenAIProviderLoginError(f"{name} must be an integer TCP port")
     return port
+
+
+def _openai_auth_method() -> str | None:
+    auth_info = _opencode_auth_records().get(PROVIDER_ID)
+    if auth_info is None:
+        return None
+    if not isinstance(auth_info, dict):
+        raise OpenAIProviderLoginError("OpenCode OpenAI auth credentials must be a JSON object")
+    auth_type = auth_info.get("type")
+    if auth_type == "oauth":
+        if (
+            _non_empty_string(auth_info.get("refresh"))
+            and _non_empty_string(auth_info.get("access"))
+            and isinstance(auth_info.get("expires"), int | float)
+        ):
+            return "oauth"
+        raise OpenAIProviderLoginError("OpenCode OpenAI OAuth credentials are incomplete")
+    if auth_type == "api":
+        if _non_empty_string(auth_info.get("key")):
+            return "api"
+        raise OpenAIProviderLoginError("OpenCode OpenAI API key credentials are incomplete")
+    raise OpenAIProviderLoginError("OpenCode OpenAI auth credentials have unsupported type")
+
+
+def _opencode_auth_records() -> dict[str, Any]:
+    auth_content = os.environ.get("OPENCODE_AUTH_CONTENT")
+    if auth_content:
+        source = "OPENCODE_AUTH_CONTENT"
+        try:
+            records = json.loads(auth_content)
+        except json.JSONDecodeError as error:
+            raise OpenAIProviderLoginError(f"{source} contains invalid JSON") from error
+    else:
+        source = str(_opencode_auth_path())
+        path = Path(source)
+        if not path.exists():
+            return {}
+        try:
+            records = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise OpenAIProviderLoginError(f"OpenCode auth file contains invalid JSON: {source}") from error
+    if not isinstance(records, dict):
+        raise OpenAIProviderLoginError(f"OpenCode auth records must be a JSON object: {source}")
+    return records
+
+
+def _opencode_auth_path() -> Path:
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home) / "opencode" / "auth.json"
+    home = os.environ.get("HOME")
+    if not home:
+        raise OpenAIProviderLoginError("HOME or XDG_DATA_HOME is required")
+    return Path(home) / ".local" / "share" / "opencode" / "auth.json"
+
+
+def _non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and value.strip() != ""
 
 
 def main() -> None:

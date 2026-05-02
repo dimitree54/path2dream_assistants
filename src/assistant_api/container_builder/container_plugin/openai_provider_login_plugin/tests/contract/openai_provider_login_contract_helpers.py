@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
@@ -183,6 +183,25 @@ def wait_for_status_state(
                 return last_status
         time.sleep(0.05)
     raise AssertionError(f"status never reached {expected_state}: {last_status}")
+
+
+def write_openai_oauth_auth(data_home: Path) -> Path:
+    auth_path = data_home / "opencode" / "auth.json"
+    auth_path.parent.mkdir(parents=True, exist_ok=True)
+    auth_path.write_text(
+        json.dumps(
+            {
+                PROVIDER_ID: {
+                    "type": "oauth",
+                    "refresh": "contract-refresh-token",
+                    "access": "contract-access-token",
+                    "expires": int(time.time() * 1000) + 3_600_000,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return auth_path
 
 
 def extract_first_href(html: str) -> str:

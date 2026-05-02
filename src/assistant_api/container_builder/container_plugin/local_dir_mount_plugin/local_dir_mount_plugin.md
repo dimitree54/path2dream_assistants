@@ -26,6 +26,7 @@ tags:
 from assistant_api.container_builder.container_plugin.local_dir_mount_plugin import LocalDirMountPluginService
 
 plugin = LocalDirMountPluginService(".")
+plugin_with_subdir = LocalDirMountPluginService(".", workspace_subdir_name="notes")
 ```
 
 ## Init time
@@ -34,7 +35,9 @@ class LocalDirMountPluginService:
     def __init__(
         self,
         host_path: str | Path,
-        container_path: PurePosixPath = PurePosixPath("/workspace/project"),
+        workspace_subdir_name: str | None = None,
+        *,
+        container_path: PurePosixPath | None = None,
         mode: str = "rw",
     ) -> None:
         pass
@@ -46,7 +49,11 @@ Runtime-интерфейс не добавляет ничего нового, а
 During `post_start`, the service must verify inside the container that `container_path` exists, is readable, and is writable when the mount mode is not `ro`.
 
 # Requirements
-- By default host path must be mounted into `/workspace/project`.
+- By default host path must be mounted directly into `/workspace`.
+- If `workspace_subdir_name` is provided, host path must be mounted into `/workspace/<workspace_subdir_name>`.
+- `workspace_subdir_name` must be one safe directory name: not empty, not absolute, not nested, and not `.` or `..`.
+- If `container_path` is provided, the service must use it as the mount target.
+- `workspace_subdir_name` and `container_path` are mutually exclusive.
 - The service must record `MountMetadata` so mount-aware plugins can use it.
 - The service must fail fast if the mounted directory is not usable inside the container.
 - The service must not imply that OpenCode runs from the mounted directory.

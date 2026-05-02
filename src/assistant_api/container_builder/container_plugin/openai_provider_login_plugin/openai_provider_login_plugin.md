@@ -96,7 +96,8 @@ OpenCode provider endpoints used by this service:
 - Browser redirect OAuth flow is not the production contract for remote containers.
 - `/status` must return JSON with at least `authValid`, `state`, `message`, and `providerName`.
 - `/status.state` must be one of `unavailable`, `unauthenticated`, `authenticated`, or `error`.
-- On status check, it should use OpenCode server API to check the OpenAI provider status.
+- On status check, it should use OpenCode server API to check that the OpenAI provider is available, and OpenCode auth storage to check that real OpenAI credentials are present.
+- `/status.authValid=true` must require valid OpenCode `openai` auth credentials in `~/.local/share/opencode/auth.json` or equivalent OpenCode auth content. OpenCode `/provider.connected` alone must not be treated as successful auth.
 - Provider auth must be checked against the local OpenCode API URL derived from OpenCode runtime metadata.
 - The service must accept the OpenAI model name for OpenCode through init-time configuration as `opencode_model`.
 - The default `opencode_model` must be `openai/gpt-5.5`.

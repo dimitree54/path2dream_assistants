@@ -32,6 +32,7 @@ def test_public_service_class_name_and_init_signature_defaults() -> None:
         "container_port",
         "list_endpoint_path",
         "download_endpoint_path",
+        "wait_for_mount",
     ]
     assert signature.parameters["host_port"].default == 8090
     assert signature.parameters["container_port"].default is None
@@ -40,6 +41,7 @@ def test_public_service_class_name_and_init_signature_defaults() -> None:
         signature.parameters["download_endpoint_path"].default
         == "/api/outbox/download"
     )
+    assert signature.parameters["wait_for_mount"].default is False
 
 
 def test_service_implements_container_plugin_protocol() -> None:
@@ -398,6 +400,25 @@ def test_configure_container_works_with_remote_mount_source() -> None:
 
     assert container_spec.state[MOUNT_METADATA_STATE_KEY].source_type == "remote"
     assert container_spec.startup_tasks == []
+    command_text = container_spec.managed_processes[0].command[2]
+    assert "mountpoint -q" in command_text
+    assert "Required mount is not ready" in command_text
+    assert "rclone" not in command_text
+    assert "OUTBOX_SOURCE_TYPE" not in command_text
+
+
+def test_configure_container_wait_for_mount_uses_infinite_wait_loop() -> None:
+    plugin = service_class()(host_port=unused_port(), wait_for_mount=True)
+    metadata = mount_metadata()
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[_MountStatePlugin(metadata), plugin]
+    )._prepare_specs()
+
+    command_text = container_spec.managed_processes[0].command[2]
+    assert "while ! mountpoint -q" in command_text
+    assert "Waiting for mounted path" in command_text
+    assert "Required mount is not ready" not in command_text
 
 
 def test_configure_container_behavior_identical_for_local_and_remote() -> None:
@@ -424,6 +445,7 @@ def test_configure_container_behavior_identical_for_local_and_remote() -> None:
     )._prepare_specs()
 
     assert ctr_l.startup_tasks == ctr_r.startup_tasks == []
+    assert ctr_l.managed_processes == ctr_r.managed_processes
     assert ctr_l.ports == ctr_r.ports
     assert ctr_l.command is None and ctr_r.command is None
     assert ctr_l.working_dir is None and ctr_r.working_dir is None
@@ -508,6 +530,8 @@ def test_post_start_does_not_start_host_side_server() -> None:
     # Should not raise and should not start host-side listeners
     plugin.post_start(runtime)
     assert runtime.container.commands
+    assert "mountpoint -q" in runtime.container.commands[0][2]
+    assert "Required mount is not ready" in runtime.container.commands[0][2]
     assert "/api/outbox/list" in runtime.container.commands[0][2]
 
 
@@ -530,7 +554,7 @@ def test_post_start_does_not_modify_state() -> None:
     assert set(container_spec.state.keys()) == state_before
 
 
-def test_post_start_checks_remote_mount_before_endpoint_probe() -> None:
+def test_post_start_uses_plain_endpoint_probe_for_remote_mount_metadata() -> None:
     plugin = service_class()(host_port=unused_port())
     metadata = mount_metadata(source_type="remote", remote_name="gdrive")
 
@@ -547,8 +571,30 @@ def test_post_start_checks_remote_mount_before_endpoint_probe() -> None:
         )
     )
 
-    assert "mountpoint" in container.commands[0][2]
-    assert "rclone" in container.commands[0][2]
+    assert "/api/outbox/list" in container.commands[0][2]
+    assert "mountpoint -q" in container.commands[0][2]
+    assert "rclone" not in container.commands[0][2]
+
+
+def test_post_start_wait_for_mount_uses_infinite_wait_loop() -> None:
+    plugin = service_class()(host_port=unused_port(), wait_for_mount=True)
+    metadata = mount_metadata()
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[_MountStatePlugin(metadata), plugin]
+    )._prepare_specs()
+
+    container = FakeContainer()
+    plugin.post_start(
+        ContainerRuntimeContext(
+            docker_client=object(),
+            container=container,
+            state=container_spec.state,
+        )
+    )
+
+    assert "while ! mountpoint -q" in container.commands[0][2]
+    assert "Waiting for mounted path" in container.commands[0][2]
 
 
 def test_post_start_fails_when_endpoint_probe_fails() -> None:

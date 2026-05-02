@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from openai_provider_login_contract_helpers import OpenAIProviderEnv, unused_port
+from openai_provider_login_contract_helpers import (
+    OpenAIProviderEnv,
+    unused_port,
+    write_openai_oauth_auth,
+)
 
 
 @dataclass(slots=True)
@@ -134,6 +140,11 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
                     return
                 if state.callback_connects_auth:
                     state.connected = True
+                    data_home = os.environ.get("XDG_DATA_HOME")
+                    if not data_home:
+                        self._send_json(500, {"error": "XDG_DATA_HOME is required"})
+                        return
+                    write_openai_oauth_auth(Path(data_home))
                     self._send_json(200, True)
                 else:
                     self._send_json(200, False)

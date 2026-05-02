@@ -20,7 +20,7 @@ from assistant_api.models import RunningContainer
 from google_drive_mount_contract_helpers import extract_login_href, read_url, service_url, status_json
 
 
-MOUNT_PATH = PurePosixPath("/workspace/project")
+MOUNT_PATH = PurePosixPath("/workspace")
 MANUAL_DRIVE_FOLDER_NAME = "Notes Assistant API Manual Folder"
 MANUAL_CONFIG_VOLUME = "notes_assistant_api_google_drive_manual_contract_config"
 MANUAL_CACHE_VOLUME = "notes_assistant_api_google_drive_manual_contract_cache"
@@ -175,10 +175,37 @@ class LiveGoogleDriveMountRuntime:
                     host_port=self.host_port,
                     drive_folder_name=MANUAL_DRIVE_FOLDER_NAME,
                     container_path=MOUNT_PATH,
+                    enable_local_folder_import=True,
                 ),
             ],
             container_name=self.container_name,
         )
+
+    def post_local_folder_import(self, files: dict[str, bytes]) -> str:
+        boundary = "----ManualLocalFolderImportBoundary"
+        body_parts: list[bytes] = []
+        for relative_path, content in files.items():
+            body_parts.append(f"--{boundary}".encode())
+            body_parts.append(
+                (
+                    'Content-Disposition: form-data; name="files"; '
+                    f'filename="{relative_path}"'
+                ).encode()
+            )
+            body_parts.append(b"Content-Type: application/octet-stream")
+            body_parts.append(b"")
+            body_parts.append(content)
+        body_parts.append(f"--{boundary}--".encode())
+        response = read_url(
+            service_url(self.host_port, "/import/local-folder"),
+            data=b"\r\n".join(body_parts),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        if response.status != 200:
+            raise AssertionError(
+                f"local folder import failed with status {response.status}: {response.text}"
+            )
+        return response.text
 
 
 def unique_relative_dir(test_name: str) -> str:

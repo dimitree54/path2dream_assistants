@@ -38,11 +38,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     builder = create_builder()
+    print(f"google_drive_auth=http://127.0.0.1:4101/login", flush=True)
     running = builder.build_and_run()
     print(f"container={running.name}", flush=True)
     print(f"id={running.id}", flush=True)
     print(f"url=http://127.0.0.1:4321/", flush=True)
-    print(f"google_drive_auth=http://127.0.0.1:4101/login", flush=True)
     print(f"openai_auth=http://127.0.0.1:4323/login", flush=True)
     print(f"inbox_upload=http://127.0.0.1:8090/api/inbox/upload", flush=True)
     print(f"outbox_download=http://127.0.0.1:8091/api/outbox/download", flush=True)
@@ -63,16 +63,17 @@ def create_builder() -> ContainerBuilderService:
                 persist_skills=False,
                 persist_agents=False,
             ),
-            OpenCodeServerPluginService(host_port=host_port),
-            SkillsSyncPluginService(["yid-notes-assistant"]),
-            OpenAIProviderLoginPluginService(host_port=openai_auth_port),
             GoogleDrivePersistencePluginService(),
             GoogleDriveMountPluginService(
                 host_port=google_drive_auth_port,
                 drive_folder_name="notes",
+                enable_local_folder_import=True,
             ),
-            InboxUploadPluginService(host_port=inbox_port),
-            OutboxDownloadPluginService(host_port=outbox_port),
+            OpenCodeServerPluginService(host_port=host_port, wait_for_mount=True),
+            SkillsSyncPluginService(["yid-notes-assistant"]),
+            OpenAIProviderLoginPluginService(host_port=openai_auth_port),
+            InboxUploadPluginService(host_port=inbox_port, wait_for_mount=True),
+            OutboxDownloadPluginService(host_port=outbox_port, wait_for_mount=True),
         ]
     )
 

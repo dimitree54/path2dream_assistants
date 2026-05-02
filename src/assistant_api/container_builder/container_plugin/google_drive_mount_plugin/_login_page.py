@@ -5,6 +5,11 @@ import html
 from importlib import resources
 from pathlib import Path
 
+if __package__:
+    from ._local_folder_import_control import render_local_folder_import_control
+else:
+    from _local_folder_import_control import render_local_folder_import_control
+
 
 LOGO_ASSET_NAME = "petprojectcofounder_logo_small.PNG"
 SHARED_STYLE_ASSET_NAME = "petprojectcofounder_login_page.css"
@@ -27,8 +32,9 @@ def render_login_page(authorize_url: str, folder_name: str) -> str:
     )
 
 
-def render_mount_success_page(folder_name: str) -> str:
+def render_mount_success_page(folder_name: str, enable_local_folder_import: bool = False) -> str:
     safe_folder_name = html.escape(folder_name)
+    import_control = render_local_folder_import_control() if enable_local_folder_import else ""
     return _render_page(
         title="Google Drive Connected | Pet Project Cofounder",
         content=f"""
@@ -44,6 +50,7 @@ def render_mount_success_page(folder_name: str) -> str:
           <p class="success">Everything is ready. Proceed to using the Assistant.</p>
         </div>
       </section>
+{import_control}
       <div class="actions">
         <a class="button" href="/logout">Log out</a>
       </div>

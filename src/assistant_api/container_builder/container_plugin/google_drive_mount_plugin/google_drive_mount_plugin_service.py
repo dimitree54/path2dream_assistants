@@ -14,7 +14,6 @@ from assistant_api.models import (
     ContainerManagedProcess,
     ContainerRuntimeContext,
     ContainerSpec,
-    ContainerStartupTask,
     ImageSpec,
     MountMetadata,
     OpenCodeRuntimeMetadata,
@@ -28,8 +27,10 @@ AUTH_SERVER_DIR = "/opt/notes-assistant-api/google_drive_mount_plugin"
 AUTH_SERVER_PATH = f"{AUTH_SERVER_DIR}/google_drive_mount_auth_server.py"
 HTTP_HANDLER_PATH = f"{AUTH_SERVER_DIR}/_http_handler.py"
 LOGIN_PAGE_PATH = f"{AUTH_SERVER_DIR}/_login_page.py"
+LOCAL_FOLDER_IMPORT_CONTROL_PATH = f"{AUTH_SERVER_DIR}/_local_folder_import_control.py"
 LOGO_ASSET_PATH = f"{AUTH_SERVER_DIR}/assets/{LOGO_ASSET_NAME}"
 SHARED_STYLE_ASSET_PATH = f"{AUTH_SERVER_DIR}/assets/{SHARED_STYLE_ASSET_NAME}"
+WORKSPACE_PATH = PurePosixPath("/workspace")
 
 
 class GoogleDriveMountPluginService:
@@ -39,6 +40,8 @@ class GoogleDriveMountPluginService:
         self,
         host_port: int,
         drive_folder_name: str,
+        workspace_subdir_name: str | None = None,
+        *,
         container_path: PurePosixPath | None = None,
         auth_container_port: int | None = None,
         remote_name: str = "gdrive",
@@ -46,19 +49,23 @@ class GoogleDriveMountPluginService:
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
         oauth_token_url: str = "https://oauth2.googleapis.com/token",
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
+        enable_local_folder_import: bool = False,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.auth_container_port = self._validate_port(
             "auth_container_port",
             auth_container_port if auth_container_port is not None else host_port,
         )
-        self._explicit_container_path = container_path
-        self.container_path = container_path
+        self.container_path = _mount_target_path(
+            workspace_subdir_name=workspace_subdir_name,
+            container_path=container_path,
+        )
         self.remote_name = remote_name
         self.mode = mode
         self.oauth_authorize_url = oauth_authorize_url
         self.oauth_token_url = oauth_token_url
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
+        self.enable_local_folder_import = enable_local_folder_import
         if not drive_folder_name:
             raise ConfigurationError("drive_folder_name is required")
         self.folder_name = drive_folder_name
@@ -68,15 +75,15 @@ class GoogleDriveMountPluginService:
     def configure_image(self, image: ImageSpec) -> None:
         image.apk_packages.extend(["rclone", "fuse3", "python3"])
         image.run_commands.extend(_install_auth_server_commands())
-        if self._explicit_container_path is not None:
-            image.run_commands.append(f"mkdir -p {shlex.quote(str(self._explicit_container_path))}")
+        if self.container_path != WORKSPACE_PATH:
+            image.run_commands.append(f"mkdir -p {shlex.quote(str(self.container_path))}")
 
     def configure_container(self, container: ContainerSpec) -> None:
-        container_path = self._explicit_container_path
-        if container_path is None:
-            opencode_runtime = self._opencode_runtime(container.state)
-            container_path = opencode_runtime.working_dir / self.folder_name
-        self.container_path = container_path
+        container_path = self.container_path
+        self._fail_if_configured_after_opencode_direct_workspace_mount(
+            container.state,
+            container_path,
+        )
         container.ports[self.auth_container_port] = self.host_port
         container.env.update(
             {
@@ -88,6 +95,9 @@ class GoogleDriveMountPluginService:
                 "GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL": self.oauth_authorize_url,
                 "GOOGLE_DRIVE_OAUTH_TOKEN_URL": self.oauth_token_url,
                 "GOOGLE_DRIVE_API_BASE_URL": self.drive_api_base_url,
+                "GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT": _bool_env(
+                    self.enable_local_folder_import
+                ),
                 "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON": self.credentials_json,
             }
         )
@@ -103,13 +113,6 @@ class GoogleDriveMountPluginService:
             source_type="remote",
             remote_name=self.remote_name,
         )
-        if self._requires_blocking_restore(container):
-            container.startup_tasks.append(
-                ContainerStartupTask(
-                    name="google-drive-mount-restore",
-                    command=["/bin/sh", "-lc", _auth_server_command("--restore-persisted-mount")],
-                )
-            )
         container.managed_processes.append(
             ContainerManagedProcess(
                 name="google-drive-mount",
@@ -147,16 +150,22 @@ class GoogleDriveMountPluginService:
         return value
 
     @staticmethod
-    def _opencode_runtime(state: dict[str, object]) -> OpenCodeRuntimeMetadata:
+    def _fail_if_configured_after_opencode_direct_workspace_mount(
+        state: dict[str, object],
+        container_path: PurePosixPath,
+    ) -> None:
         metadata = state.get(OPENCODE_RUNTIME_STATE_KEY)
+        if metadata is None:
+            return
         if not isinstance(metadata, OpenCodeRuntimeMetadata):
-            raise ConfigurationError("GoogleDriveMountPluginService requires OpenCode runtime metadata")
-        return metadata
-
-    @staticmethod
-    def _requires_blocking_restore(container: ContainerSpec) -> bool:
-        return bool(container.env.get("RCLONE_CONFIG"))
-
+            raise ConfigurationError(
+                "GoogleDriveMountPluginService requires valid OpenCode runtime metadata"
+            )
+        if metadata.working_dir == container_path:
+            raise ConfigurationError(
+                "GoogleDriveMountPluginService must be configured before OpenCode "
+                "when mounting Google Drive directly into the OpenCode working directory"
+            )
 
 def _install_auth_server_commands() -> list[str]:
     module_dir = Path(__file__).parent
@@ -164,6 +173,9 @@ def _install_auth_server_commands() -> list[str]:
         AUTH_SERVER_PATH: module_dir.joinpath("_auth_server.py").read_bytes(),
         HTTP_HANDLER_PATH: module_dir.joinpath("_http_handler.py").read_bytes(),
         LOGIN_PAGE_PATH: module_dir.joinpath("_login_page.py").read_bytes(),
+        LOCAL_FOLDER_IMPORT_CONTROL_PATH: module_dir.joinpath(
+            "_local_folder_import_control.py"
+        ).read_bytes(),
         LOGO_ASSET_PATH: module_dir.joinpath("assets", LOGO_ASSET_NAME).read_bytes(),
         SHARED_STYLE_ASSET_PATH: module_dir.parent.joinpath(
             "assets", SHARED_STYLE_ASSET_NAME
@@ -210,9 +222,44 @@ def _auth_server_command(*args: str) -> str:
         "GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL=$GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL "
         "GOOGLE_DRIVE_OAUTH_TOKEN_URL=$GOOGLE_DRIVE_OAUTH_TOKEN_URL "
         "GOOGLE_DRIVE_API_BASE_URL=$GOOGLE_DRIVE_API_BASE_URL "
+        "GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT=$GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT "
         "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON=$GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON "
         f"exec python3 {shlex.quote(AUTH_SERVER_PATH)}{extra_args}"
     )
+
+
+def _bool_env(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def _mount_target_path(
+    *,
+    workspace_subdir_name: str | None,
+    container_path: PurePosixPath | None,
+) -> PurePosixPath:
+    if workspace_subdir_name is not None and container_path is not None:
+        raise ConfigurationError(
+            "workspace_subdir_name and container_path are mutually exclusive"
+        )
+    if container_path is not None:
+        return container_path
+    if workspace_subdir_name is None:
+        return WORKSPACE_PATH
+    return WORKSPACE_PATH / _validate_workspace_subdir_name(workspace_subdir_name)
+
+
+def _validate_workspace_subdir_name(value: object) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ConfigurationError("workspace_subdir_name must be one safe directory name")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or len(path.parts) != 1
+        or value in {".", ".."}
+        or "\\" in value
+    ):
+        raise ConfigurationError("workspace_subdir_name must be one safe directory name")
+    return value
 
 
 def _auth_status_health_command(
@@ -241,9 +288,7 @@ def _auth_status_health_command(
         "\n"
         "def persisted_remote_exists():\n"
         "    config = os.environ.get('RCLONE_CONFIG')\n"
-        "    if not config:\n"
-        "        return False\n"
-        "    path = pathlib.Path(config)\n"
+        "    path = pathlib.Path(config) if config else pathlib.Path.home() / '.config' / 'rclone' / 'rclone.conf'\n"
         "    return path.exists() and f'[{remote_name}]' in path.read_text(encoding='utf-8')\n"
         "\n"
         "def fetch_status():\n"

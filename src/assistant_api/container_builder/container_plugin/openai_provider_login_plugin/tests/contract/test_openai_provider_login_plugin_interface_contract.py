@@ -305,14 +305,12 @@ def test_prepare_specs_compose_opencode_server_persistence_and_openai_login(
         ]
     )._prepare_specs()
 
-    assert container_spec.command == [
-        "opencode",
-        "serve",
-        "--hostname",
-        "0.0.0.0",
-        "--port",
-        str(openai_provider_env.opencode_api_port),
-    ]
+    assert container_spec.command is not None
+    assert container_spec.command[:2] == ["/bin/sh", "-lc"]
+    assert (
+        "opencode serve --hostname 0.0.0.0 "
+        f"--port {openai_provider_env.opencode_api_port}"
+    ) in container_spec.command[2]
     assert container_spec.env["HOME"] == "/root"
     assert container_spec.env["XDG_CONFIG_HOME"] == "/root/.config"
     assert container_spec.env["XDG_DATA_HOME"] == "/root/.local/share"

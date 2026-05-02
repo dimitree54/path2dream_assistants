@@ -109,7 +109,7 @@ def _clear_directory(path: Path) -> None:
         if child.is_dir():
             shutil.rmtree(child)
         else:
-            child.unlink()
+            child.unlink(missing_ok=True)
 
 
 def _wait_for_endpoint(url: str, timeout: float = 30) -> None:

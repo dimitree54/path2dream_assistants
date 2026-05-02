@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path, PurePosixPath
 
+from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin import MOUNT_METADATA_STATE_KEY
 from assistant_api.models import (
     ContainerRuntimeContext,
@@ -12,6 +13,8 @@ from assistant_api.models import (
     VolumeMount,
 )
 
+WORKSPACE_PATH = PurePosixPath("/workspace")
+
 
 class LocalDirMountPluginService:
     name = "local-dir-mount"
@@ -19,11 +22,16 @@ class LocalDirMountPluginService:
     def __init__(
         self,
         host_path: str | Path,
-        container_path: PurePosixPath = PurePosixPath("/workspace/project"),
+        workspace_subdir_name: str | None = None,
+        *,
+        container_path: PurePosixPath | None = None,
         mode: str = "rw",
     ) -> None:
         self.host_path = Path(host_path).expanduser().resolve()
-        self.container_path = container_path
+        self.container_path = _mount_target_path(
+            workspace_subdir_name=workspace_subdir_name,
+            container_path=container_path,
+        )
         self.mode = mode
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -77,3 +85,33 @@ def _mount_health_command(container_path: str, mode: str) -> str:
             ]
         )
     return "\n".join(commands)
+
+
+def _mount_target_path(
+    *,
+    workspace_subdir_name: str | None,
+    container_path: PurePosixPath | None,
+) -> PurePosixPath:
+    if workspace_subdir_name is not None and container_path is not None:
+        raise ConfigurationError(
+            "workspace_subdir_name and container_path are mutually exclusive"
+        )
+    if container_path is not None:
+        return container_path
+    if workspace_subdir_name is None:
+        return WORKSPACE_PATH
+    return WORKSPACE_PATH / _validate_workspace_subdir_name(workspace_subdir_name)
+
+
+def _validate_workspace_subdir_name(value: object) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ConfigurationError("workspace_subdir_name must be one safe directory name")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or len(path.parts) != 1
+        or value in {".", ".."}
+        or "\\" in value
+    ):
+        raise ConfigurationError("workspace_subdir_name must be one safe directory name")
+    return value

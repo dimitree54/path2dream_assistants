@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import shlex
 from pathlib import Path
 
 from assistant_api.container_builder._errors import ConfigurationError
@@ -25,6 +26,7 @@ class OutboxDownloadPluginService:
         container_port: int | None = None,
         list_endpoint_path: str = "/api/outbox/list",
         download_endpoint_path: str = "/api/outbox/download",
+        wait_for_mount: bool = False,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.container_port = self._validate_port(
@@ -37,6 +39,7 @@ class OutboxDownloadPluginService:
         self.download_endpoint_path = self._validate_endpoint_path(
             "download_endpoint_path", download_endpoint_path
         )
+        self.wait_for_mount = wait_for_mount
         self._container_path: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -59,6 +62,7 @@ class OutboxDownloadPluginService:
                         container_port=self.container_port,
                         list_endpoint_path=self.list_endpoint_path,
                         download_endpoint_path=self.download_endpoint_path,
+                        wait_for_mount=self.wait_for_mount,
                     ),
                 ],
             )
@@ -77,8 +81,7 @@ class OutboxDownloadPluginService:
                     container_port=self.container_port,
                     list_endpoint_path=self.list_endpoint_path,
                     download_endpoint_path=self.download_endpoint_path,
-                    source_type=mount.source_type,
-                    remote_name=mount.remote_name,
+                    wait_for_mount=self.wait_for_mount,
                 ),
             ]
         )
@@ -149,14 +152,44 @@ def _outbox_server_command(
     container_port: int,
     list_endpoint_path: str,
     download_endpoint_path: str,
+    wait_for_mount: bool,
 ) -> str:
-    return (
-        f"OUTBOX_CONTAINER_PATH={container_path!r} "
-        f"OUTBOX_LIST_ENDPOINT_PATH={list_endpoint_path!r} "
-        f"OUTBOX_DOWNLOAD_ENDPOINT_PATH={download_endpoint_path!r} "
-        f"OUTBOX_PORT={container_port} "
-        f"exec python3 {OUTBOX_HANDLER_PATH}"
+    return "\n".join(
+        [
+            *_mount_gate_lines(container_path, wait_for_mount),
+            (
+                f"OUTBOX_CONTAINER_PATH={container_path!r} "
+                f"OUTBOX_LIST_ENDPOINT_PATH={list_endpoint_path!r} "
+                f"OUTBOX_DOWNLOAD_ENDPOINT_PATH={download_endpoint_path!r} "
+                f"OUTBOX_PORT={container_port} "
+                f"exec python3 {OUTBOX_HANDLER_PATH}"
+            ),
+        ]
     )
+
+
+def _mount_gate_lines(container_path: str, wait_for_mount: bool) -> list[str]:
+    if wait_for_mount:
+        return [
+            "set -eu",
+            f"mount_path={shlex.quote(container_path)}",
+            "attempts=0",
+            'while ! mountpoint -q "$mount_path"; do',
+            '  if [ "$attempts" -eq 0 ] || [ $((attempts % 30)) -eq 0 ]; then',
+            '    printf "Waiting for mounted path: %s\\n" "$mount_path" >&2',
+            "  fi",
+            "  attempts=$((attempts + 1))",
+            "  sleep 1",
+            "done",
+        ]
+    return [
+        "set -eu",
+        f"mount_path={shlex.quote(container_path)}",
+        'if ! mountpoint -q "$mount_path"; then',
+        '  printf "Required mount is not ready: %s\\n" "$mount_path" >&2',
+        "  exit 1",
+        "fi",
+    ]
 
 
 def _outbox_health_command(
@@ -165,15 +198,16 @@ def _outbox_health_command(
     container_port: int,
     list_endpoint_path: str,
     download_endpoint_path: str,
-    source_type: str,
-    remote_name: str | None,
+    wait_for_mount: bool,
 ) -> str:
-    return (
+    return "\n".join(
+        [
+            *_mount_gate_lines(container_path, wait_for_mount),
+            (
         "python3 - <<'PY'\n"
         "import json\n"
         "import os\n"
         "import pathlib\n"
-        "import subprocess\n"
         "import time\n"
         "import urllib.error\n"
         "import urllib.parse\n"
@@ -181,8 +215,6 @@ def _outbox_health_command(
         f"container_path = pathlib.Path({container_path!r})\n"
         f"list_url = 'http://127.0.0.1:{container_port}{list_endpoint_path}'\n"
         f"download_base_url = 'http://127.0.0.1:{container_port}{download_endpoint_path}'\n"
-        f"source_type = {source_type!r}\n"
-        f"remote_name = {remote_name!r}\n"
         "filename = f'.notes-assistant-outbox-health-{os.getpid()}.txt'\n"
         "content = b'ok'\n"
         "outbox_dir = container_path / 'outbox'\n"
@@ -190,10 +222,6 @@ def _outbox_health_command(
         "last_error = ''\n"
         "while time.monotonic() < deadline:\n"
         "    try:\n"
-        "        if source_type == 'remote':\n"
-        "            subprocess.run(['mountpoint', '-q', str(container_path)], check=True)\n"
-        "            if remote_name:\n"
-        "                subprocess.run(['rclone', 'lsf', f'{remote_name}:'], check=True, capture_output=True, text=True)\n"
         "        outbox_dir.mkdir(parents=True, exist_ok=True)\n"
         "        probe = outbox_dir / filename\n"
         "        probe.write_bytes(content)\n"
@@ -223,4 +251,6 @@ def _outbox_health_command(
         "    time.sleep(1)\n"
         "raise SystemExit(f'outbox download endpoint did not become healthy: {last_error}')\n"
         "PY"
+            ),
+        ]
     )

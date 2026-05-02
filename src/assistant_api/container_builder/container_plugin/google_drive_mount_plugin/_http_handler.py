@@ -30,6 +30,29 @@ def google_drive_mount_handler_class() -> type[BaseHTTPRequestHandler]:
                 return
             self._send(404, "text/plain; charset=utf-8", "Not found.")
 
+        def do_POST(self) -> None:
+            plugin = self.server.plugin  # type: ignore[attr-defined]
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/import/local-folder":
+                content_length = self.headers.get("Content-Length")
+                if content_length is None:
+                    self._send(400, "text/plain; charset=utf-8", "Content-Length is required.")
+                    return
+                try:
+                    body_length = int(content_length)
+                except ValueError:
+                    self._send(400, "text/plain; charset=utf-8", "Content-Length is invalid.")
+                    return
+                body = self.rfile.read(body_length)
+                self._send(
+                    *plugin._import_local_folder(
+                        self.headers.get("Content-Type", ""),
+                        body,
+                    )
+                )
+                return
+            self._send(404, "text/plain; charset=utf-8", "Not found.")
+
         def _send(self, status: int, content_type: str, body: str) -> None:
             payload = body.encode("utf-8")
             self.send_response(status)
