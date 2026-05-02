@@ -1,0 +1,15 @@
+include README.md
+include pyproject.toml
+graft src
+
+prune .codex
+prune .github
+prune .idea
+prune .pytest_cache
+prune .venv
+prune docker
+prune scripts
+
+global-exclude .DS_Store
+global-exclude __pycache__
+global-exclude *.py[cod]
