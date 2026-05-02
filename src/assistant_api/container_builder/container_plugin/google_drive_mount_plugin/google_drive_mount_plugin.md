@@ -54,6 +54,7 @@ class GoogleDriveMountPluginService:
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
         oauth_token_url: str = "https://oauth2.googleapis.com/token",
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
+        public_base_url: str | None = None,
         enable_local_folder_import: bool = False,
     ) -> None:
         pass
@@ -75,6 +76,8 @@ If `container_path` is provided, the service must use it as the mount target. `w
 If OpenCode runtime state already exists and the resolved Google Drive mount target equals the recorded OpenCode working directory, configuration must fail fast because direct-workspace mounts must be configured before consumers that use that directory.
 
 The Google Drive auth flow must run fully inside the container. The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
+
+By default, the browser-visible OAuth redirect URI must be `http://127.0.0.1:<host_port>/oauth/callback`. When `public_base_url` is provided, the OAuth redirect URI must be `<public_base_url>/oauth/callback`. For example, `public_base_url="https://notes-user.example.com"` must produce `https://notes-user.example.com/oauth/callback` in both the OAuth authorize URL and the OAuth token exchange. `public_base_url` affects only browser-visible OAuth callback construction; internal status checks, mount health checks, and container-local services must continue using local/container URLs.
 
 The service must register the Google Drive auth/status/logout/import HTTP server as a managed background process. On startup, that process must restore persisted auth and mount immediately when valid persisted auth exists. If auth is not already available, it must serve `/login` and `/status` without failing; first-time OAuth completes the Google Drive mount only after the user authorizes in the browser.
 
@@ -134,6 +137,9 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - OAuth authorize and token endpoints must be configurable at init time and default to Google OAuth endpoints.
 - Custom OAuth endpoints must be sufficient for the full OAuth flow, so local OAuth-compatible providers can be used without live Google OAuth.
 - Google Drive API base URL must be configurable at init time and default to `https://www.googleapis.com/drive/v3`.
+- Public OAuth base URL must be configurable at init time as `public_base_url` and default to local redirect behavior.
+- `public_base_url` must be an absolute public HTTP(S) base URL without query, fragment, username, password, or path other than `/`; invalid values must fail fast.
+- `public_base_url` must only affect browser-visible OAuth redirect URI construction and must not change `/status`, mount health checks, or container-local service URLs.
 - Local folder import must be disabled by default and configurable at init time as `enable_local_folder_import`.
 - The service must request the minimum Google Drive OAuth scopes that support the visible app-owned folder use case.
 - The default Google Drive OAuth scope must be `https://www.googleapis.com/auth/drive.file`.

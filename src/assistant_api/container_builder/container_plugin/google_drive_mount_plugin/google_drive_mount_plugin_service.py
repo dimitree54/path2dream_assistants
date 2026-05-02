@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import shlex
+import urllib.parse
 from pathlib import Path, PurePosixPath
 
 from assistant_api.container_builder._errors import ConfigurationError
@@ -49,6 +50,7 @@ class GoogleDriveMountPluginService:
         oauth_authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth",
         oauth_token_url: str = "https://oauth2.googleapis.com/token",
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
+        public_base_url: str | None = None,
         enable_local_folder_import: bool = False,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
@@ -65,6 +67,7 @@ class GoogleDriveMountPluginService:
         self.oauth_authorize_url = oauth_authorize_url
         self.oauth_token_url = oauth_token_url
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
+        self.public_base_url = self._validate_public_base_url(public_base_url)
         self.enable_local_folder_import = enable_local_folder_import
         if not drive_folder_name:
             raise ConfigurationError("drive_folder_name is required")
@@ -98,6 +101,7 @@ class GoogleDriveMountPluginService:
                 "GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT": _bool_env(
                     self.enable_local_folder_import
                 ),
+                "GOOGLE_DRIVE_PUBLIC_BASE_URL": self.public_base_url or "",
                 "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON": self.credentials_json,
             }
         )
@@ -167,6 +171,25 @@ class GoogleDriveMountPluginService:
                 "when mounting Google Drive directly into the OpenCode working directory"
             )
 
+    @staticmethod
+    def _validate_public_base_url(value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise ConfigurationError("public_base_url must be an absolute public URL")
+        parsed = urllib.parse.urlparse(value)
+        if parsed.scheme not in {"http", "https"}:
+            raise ConfigurationError("public_base_url must use http or https scheme")
+        if not parsed.hostname:
+            raise ConfigurationError("public_base_url must include a hostname")
+        if parsed.username or parsed.password:
+            raise ConfigurationError("public_base_url must not contain userinfo")
+        if parsed.query:
+            raise ConfigurationError("public_base_url must not include a query string")
+        if parsed.fragment:
+            raise ConfigurationError("public_base_url must not include a fragment")
+        return value.rstrip("/")
+
 def _install_auth_server_commands() -> list[str]:
     module_dir = Path(__file__).parent
     files = {
@@ -223,6 +246,7 @@ def _auth_server_command(*args: str) -> str:
         "GOOGLE_DRIVE_OAUTH_TOKEN_URL=$GOOGLE_DRIVE_OAUTH_TOKEN_URL "
         "GOOGLE_DRIVE_API_BASE_URL=$GOOGLE_DRIVE_API_BASE_URL "
         "GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT=$GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT "
+        "GOOGLE_DRIVE_PUBLIC_BASE_URL=$GOOGLE_DRIVE_PUBLIC_BASE_URL "
         "GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON=$GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON "
         f"exec python3 {shlex.quote(AUTH_SERVER_PATH)}{extra_args}"
     )

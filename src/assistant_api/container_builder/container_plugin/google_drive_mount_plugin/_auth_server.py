@@ -65,6 +65,7 @@ class GoogleDriveMountAuthServer:
         oauth_token_url: str,
         drive_api_base_url: str,
         credentials_json: str,
+        public_base_url: str | None = None,
         enable_local_folder_import: bool = False,
     ) -> None:
         self.auth_port = auth_port
@@ -76,6 +77,7 @@ class GoogleDriveMountAuthServer:
         self.oauth_token_url = oauth_token_url
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
         self.credentials = _credentials_from_json(credentials_json)
+        self.public_base_url = public_base_url
         self.enable_local_folder_import = enable_local_folder_import
         self._server: ThreadingHTTPServer | None = None
         self._state: GoogleDriveMountState = "unauthenticated"
@@ -479,6 +481,8 @@ class GoogleDriveMountAuthServer:
             raise GoogleDriveMountAuthError(f"{message}: {result.stdout}{result.stderr}")
 
     def _redirect_uri(self) -> str:
+        if self.public_base_url:
+            return f"{self.public_base_url}/oauth/callback"
         return f"http://127.0.0.1:{self.host_port}/oauth/callback"
 
     def _set_error(self, message: str) -> None:
@@ -696,6 +700,13 @@ def _optional_bool_env(name: str) -> bool:
     raise GoogleDriveMountAuthError(f"{name} must be 1 or 0")
 
 
+def _optional_str_env(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    return value
+
+
 def main() -> None:
     try:
         parser = argparse.ArgumentParser()
@@ -711,6 +722,7 @@ def main() -> None:
             oauth_token_url=_required_env("GOOGLE_DRIVE_OAUTH_TOKEN_URL"),
             drive_api_base_url=_required_env("GOOGLE_DRIVE_API_BASE_URL"),
             credentials_json=_required_env("GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON"),
+            public_base_url=_optional_str_env("GOOGLE_DRIVE_PUBLIC_BASE_URL"),
             enable_local_folder_import=_optional_bool_env(
                 "GOOGLE_DRIVE_ENABLE_LOCAL_FOLDER_IMPORT"
             ),

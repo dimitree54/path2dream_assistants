@@ -33,6 +33,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
         "oauth_authorize_url",
         "oauth_token_url",
         "drive_api_base_url",
+        "public_base_url",
         "enable_local_folder_import",
     ]
     assert signature.parameters["host_port"].default is inspect.Parameter.empty
@@ -54,6 +55,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
         signature.parameters["drive_api_base_url"].default
         == "https://www.googleapis.com/drive/v3"
     )
+    assert signature.parameters["public_base_url"].default is None
     assert signature.parameters["enable_local_folder_import"].default is False
 
 
@@ -107,6 +109,31 @@ def test_init_requires_valid_google_drive_auth_ports(
 def test_init_requires_drive_folder_name(google_env: str) -> None:
     with pytest.raises(ConfigurationError, match="drive_folder_name"):
         service_class()(host_port=unused_port(), drive_folder_name="")
+
+
+@pytest.mark.parametrize(
+    "invalid_url",
+    [
+        "",
+        "not-a-url",
+        "/relative/path",
+        "ftp://example.com",
+        "http://user@example.com",
+        "http://user:pass@example.com",
+        "https://example.com/base?query=1",
+        "https://example.com/base#fragment",
+    ],
+)
+def test_init_rejects_invalid_public_base_url(
+    google_env: str,
+    invalid_url: str,
+) -> None:
+    with pytest.raises(ConfigurationError, match="public_base_url"):
+        service_class()(
+            host_port=unused_port(),
+            drive_folder_name=google_env,
+            public_base_url=invalid_url,
+        )
 
 
 @pytest.mark.parametrize(
@@ -325,6 +352,41 @@ def test_post_start_fails_when_google_drive_status_is_unhealthy(
                 state=container_spec.state,
             )
         )
+
+
+def test_public_base_url_affects_only_auth_container_env(
+    google_env: str,
+) -> None:
+    host_port = auth_port()
+    public_base_url = "https://notes.example.com"
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+        public_base_url=public_base_url,
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    assert container_spec.ports == {host_port: host_port}
+    assert container_spec.env["GOOGLE_DRIVE_PUBLIC_BASE_URL"] == public_base_url
+    assert container_spec.env["GOOGLE_DRIVE_AUTH_HOST_PORT"] == str(host_port)
+
+
+def test_default_redirect_uri_remains_local_when_public_base_url_is_not_set(
+    google_env: str,
+) -> None:
+    host_port = auth_port()
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    assert container_spec.env.get("GOOGLE_DRIVE_PUBLIC_BASE_URL", "") in ("", "0")
+    assert container_spec.env["GOOGLE_DRIVE_AUTH_HOST_PORT"] == str(host_port)
 
 
 class _SuccessfulExecContainer:

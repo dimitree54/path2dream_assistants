@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 from importlib import resources
 from pathlib import Path, PurePosixPath
 
@@ -234,6 +235,40 @@ def test_logout_unmounts_and_clears_auth_config(
     assert fake_rclone.config_marker.exists() is False
     assert any(command[:1] == ["unmount"] for command in fake_rclone.commands())
     assert any(command[:2] == ["config", "delete"] for command in fake_rclone.commands())
+
+
+def test_public_base_url_produces_public_redirect_uri_in_authorize_and_token_exchange(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+) -> None:
+    host_port = auth_port()
+    container_path = PurePosixPath(str(tmp_path / "project"))
+    public_base_url = "https://notes.example.com"
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=container_path,
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+        public_base_url=public_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    login = read_url(service_url(host_port, "/login"))
+    assert login.status == 200
+    assert "text/html" in login.headers.get("Content-Type", "")
+
+    authorize_url = extract_login_href(login.text)
+    parsed = urllib.parse.urlparse(authorize_url)
+    authorize_query = urllib.parse.parse_qs(parsed.query)
+    expected_redirect = f"{public_base_url}/oauth/callback"
+    assert authorize_query["redirect_uri"] == [expected_redirect], authorize_url
+
+    assert status_json(host_port)["state"] == "authenticating"
+    assert authorize_url.startswith(oauth_drive_stub.authorize_url)
 
 
 def _style_block(page_html: str) -> str:

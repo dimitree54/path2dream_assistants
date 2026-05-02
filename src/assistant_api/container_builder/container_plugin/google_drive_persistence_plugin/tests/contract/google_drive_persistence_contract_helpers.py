@@ -120,6 +120,7 @@ def start_mount_plugin(
         oauth_token_url=plugin.oauth_token_url,
         drive_api_base_url=plugin.drive_api_base_url,
         credentials_json=plugin.credentials_json,
+        public_base_url=plugin.public_base_url,
     )
     server.start_in_thread("127.0.0.1")
     _started_auth_servers.append(server)
