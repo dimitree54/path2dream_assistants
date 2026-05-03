@@ -111,6 +111,7 @@ OpenCode provider endpoints used by this service:
 - Missing OpenCode server availability at startup must lead to fail fast.
 - Missing OpenAI provider in OpenCode `/provider` response must lead to fail fast.
 - Missing headless OAuth method for OpenAI in OpenCode `/provider/auth` response must lead to fail fast.
+- The auth server startup must not impose a hard timeout when waiting for OpenCode health; failure detection is delegated to `post_start` (`/status` health check) and the auth server's internal startup validation (`_validate_startup`).
 - The service must fail fast if its container-local `/status` endpoint does not become healthy after the managed auth process starts.
 - The service must not fall back to redirect OAuth or API key auth when headless OAuth is unavailable.
 - Successful auth must be visible through `/status`.

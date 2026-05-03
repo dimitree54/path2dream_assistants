@@ -163,13 +163,8 @@ def _install_file_commands(target_path: str, content: bytes) -> list[str]:
 
 def _auth_server_command() -> str:
     return (
-        "attempts=0; "
-        "until wget -qO- http://127.0.0.1:$OPENCODE_API_PORT/global/health "
+        "while ! wget -qO- http://127.0.0.1:$OPENCODE_API_PORT/global/health "
         ">/dev/null 2>&1; do "
-        "attempts=$((attempts + 1)); "
-        "if [ $attempts -ge 30 ]; then "
-        "echo 'OpenCode server did not become ready' >&2; exit 1; "
-        "fi; "
         "sleep 1; "
         "done; "
         "OPENCODE_API_PORT=$OPENCODE_API_PORT "
