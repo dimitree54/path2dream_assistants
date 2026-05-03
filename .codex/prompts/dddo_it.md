@@ -3,3 +3,6 @@ Ok, do it, but in the following pipeline:
 2. If needed, do some red tests for new functionality
 3. Spawn a dev sub-agent with detailed task of what to implement
 4. Validate their work, make sure tests became green and that developer did not do some side changes
+5. If all good, commit, push new tag to trigger release to pypi
+6. wait for release, make sure that the new version appeared in pip
+7. if relevant, close the corresponding issues with a comment and number of version with the fix
