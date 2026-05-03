@@ -9,6 +9,7 @@ from assistant_api.models import (
     ContainerSpec,
     ImageSpec,
     OpenCodeRuntimeMetadata,
+    PublishedPort,
 )
 
 
@@ -20,10 +21,12 @@ class OpenCodeServerPluginService:
         host_port: int = 4096,
         container_port: int = 4096,
         wait_for_mount: bool = False,
+        host: str | None = None,
     ) -> None:
         self.host_port = host_port
         self.container_port = container_port
         self.wait_for_mount = wait_for_mount
+        self.host = _validate_host(host)
         self._working_dir: PurePosixPath | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -46,7 +49,7 @@ class OpenCodeServerPluginService:
             self.wait_for_mount,
             command,
         )
-        container.ports[self.container_port] = self.host_port
+        container.ports[self.container_port] = _published_port(self.host_port, self.host)
         container.state[OPENCODE_RUNTIME_STATE_KEY] = OpenCodeRuntimeMetadata(
             working_dir=container.working_dir,
             api_container_port=self.container_port,
@@ -92,6 +95,19 @@ def _mount_gated_command(
             ]
         ),
     ]
+
+
+def _published_port(host_port: int, host: str | None) -> int | PublishedPort:
+    if host is None:
+        return host_port
+    return PublishedPort(host_port=host_port, host=host)
+
+
+def _validate_host(value: str | None) -> str | None:
+    if value is None:
+        return None
+    PublishedPort(host_port=1, host=value)
+    return value
 
 
 def _mount_gate_lines(container_path: str, wait_for_mount: bool) -> list[str]:

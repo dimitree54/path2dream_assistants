@@ -16,6 +16,7 @@ from assistant_api.models import (
     ContainerRuntimeContext,
     ImageSpec,
     OpenCodeRuntimeMetadata,
+    PublishedPort,
 )
 
 
@@ -26,10 +27,12 @@ def test_opencode_server_init_signature_defaults() -> None:
         "host_port",
         "container_port",
         "wait_for_mount",
+        "host",
     ]
     assert signature.parameters["host_port"].default == 4096
     assert signature.parameters["container_port"].default == 4096
     assert signature.parameters["wait_for_mount"].default is False
+    assert signature.parameters["host"].default is None
 
 
 def test_opencode_server_plugin_adds_mount_gated_command_and_port_without_persistence() -> None:
@@ -68,6 +71,21 @@ def test_opencode_server_plugin_uses_configured_port_and_existing_working_dir() 
     assert isinstance(runtime, OpenCodeRuntimeMetadata)
     assert runtime.working_dir == PurePosixPath("/workspace/project")
     assert runtime.api_container_port == 5096
+
+
+def test_opencode_server_plugin_supports_host_bind_address() -> None:
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeServerPluginService(host_port=4097, host="127.0.0.1")]
+    )._prepare_specs()
+
+    assert container_spec.ports == {
+        4096: PublishedPort(host_port=4097, host="127.0.0.1")
+    }
+
+
+def test_opencode_server_plugin_rejects_invalid_host_bind_address() -> None:
+    with pytest.raises(Exception, match="host"):
+        OpenCodeServerPluginService(host_port=4097, host="localhost")
 
 
 def test_opencode_server_wait_for_mount_uses_infinite_wait_loop() -> None:

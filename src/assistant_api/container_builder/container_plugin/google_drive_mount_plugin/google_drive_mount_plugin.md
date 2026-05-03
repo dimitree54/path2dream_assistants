@@ -56,6 +56,7 @@ class GoogleDriveMountPluginService:
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
         public_base_url: str | None = None,
         enable_local_folder_import: bool = False,
+        host: str | None = None,
     ) -> None:
         pass
 ```
@@ -76,6 +77,8 @@ If `container_path` is provided, the service must use it as the mount target. `w
 If OpenCode runtime state already exists and the resolved Google Drive mount target equals the recorded OpenCode working directory, configuration must fail fast because direct-workspace mounts must be configured before consumers that use that directory.
 
 The Google Drive auth flow must run fully inside the container. The host/external auth port is `host_port`. The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either host/external port or Google Drive folder name.
+
+The optional Docker host bind address is configured through `host`. When `host` is not provided, Docker default bind behavior must be preserved. When `host` is provided, the auth port must bind only to that host address.
 
 By default, the browser-visible OAuth redirect URI must be `http://127.0.0.1:<host_port>/oauth/callback`. When `public_base_url` is provided, the OAuth redirect URI must be `<public_base_url>/oauth/callback`. For example, `public_base_url="https://notes-user.example.com"` must produce `https://notes-user.example.com/oauth/callback` in both the OAuth authorize URL and the OAuth token exchange. `public_base_url` affects only browser-visible OAuth callback construction; internal status checks, mount health checks, and container-local services must continue using local/container URLs.
 
@@ -115,6 +118,8 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 # Requirements
 - The service must not hardcode a default Google Drive auth host/external port.
 - The service must accept Google Drive auth host/external port through init-time configuration as `host_port`.
+- The service must accept optional Docker host bind address through init-time configuration as `host`.
+- Invalid `host` bind values must fail fast.
 - The service must run the Google Drive auth web server inside the container and expose it only through Docker port publishing.
 - The service must not start host-side auth servers, host-side HTTP listeners, host-side background threads, or host-side auth flow processes.
 - The service must not require the launcher Python process to stay alive after `build_and_run()` for published auth endpoints to remain available.

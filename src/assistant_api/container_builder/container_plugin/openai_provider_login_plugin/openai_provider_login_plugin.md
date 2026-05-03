@@ -40,11 +40,14 @@ class OpenAIProviderLoginPluginService:
         host_port: int,
         auth_container_port: int | None = None,
         opencode_model: str = "openai/gpt-5.5",
+        host: str | None = None,
     ) -> None:
         pass
 ```
 
 The auth flow must run fully inside the container. The host/external auth port is configured through `host_port`.
+
+The optional Docker host bind address is configured through `host`. When `host` is not provided, Docker default bind behavior must be preserved. When `host` is provided, the auth port must bind only to that host address.
 
 The container/internal auth port is `auth_container_port` when provided; otherwise the service may choose its own internal port. Caller-provided environment variables must not be required for either auth host/external port or OpenCode API port.
 
@@ -75,6 +78,8 @@ OpenCode provider endpoints used by this service:
 # Requirements
 - Provider id is fixed to `openai`.
 - The service must accept auth host/external port through init-time configuration as `host_port`.
+- The service must accept optional Docker host bind address through init-time configuration as `host`.
+- Invalid `host` bind values must fail fast.
 - The service must run the OpenAI provider auth web server inside the container and expose it only through Docker port publishing.
 - The service must not start host-side auth servers, host-side HTTP listeners, host-side background threads, or host-side auth flow processes.
 - The service must not require the launcher Python process to stay alive after `build_and_run()` for published auth endpoints to remain available.

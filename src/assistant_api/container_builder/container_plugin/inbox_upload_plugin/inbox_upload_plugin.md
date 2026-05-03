@@ -43,6 +43,7 @@ class InboxUploadPluginService:
         container_port: int | None = None,
         upload_endpoint_path: str = "/api/inbox/upload",
         wait_for_mount: bool = False,
+        host: str | None = None,
     ) -> None:
         pass
 ```
@@ -52,6 +53,7 @@ class InboxUploadPluginService:
 - `container_port` — container-local порт upload HTTP-сервера (если не задан, равен `host_port`);
 - `upload_endpoint_path` — путь endpoint для загрузки внутри контейнера (по умолчанию `/api/inbox/upload`).
 - `wait_for_mount` — если `False`, сервис fail fast, когда `MountMetadata.container_path` ещё не является mountpoint; если `True`, сервис ждёт mount бесконечно.
+- `host` — optional Docker host bind address; если не задан, сохраняется default Docker bind behavior.
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
@@ -84,6 +86,8 @@ Upload endpoint поведение (FastAPI HTTP-сервер внутри ко�
 - Upload endpoint должен работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.
+- `host` должен быть optional init-time параметром для Docker host bind address; если задан, upload endpoint должен публиковаться только на этот host address.
+- Invalid `host` bind values must fail fast.
 - Endpoint загрузки должен принимать файлы через multipart/form-data с полем `file`.
 - Endpoint загрузки должен сохранять файлы с их оригинальными именами внутрь `inbox`, перезаписывая при совпадении.
 - Endpoint должен возвращать абсолютный путь к файлу внутри контейнера после успешной загрузки.

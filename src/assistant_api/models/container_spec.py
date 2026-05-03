@@ -5,6 +5,7 @@ from pathlib import PurePosixPath
 
 from .container_managed_process import ContainerManagedProcess
 from .container_startup_task import ContainerStartupTask
+from .published_port import PublishedPort
 from .volume_mount import VolumeMount
 
 
@@ -14,7 +15,7 @@ class ContainerSpec:
     image_tag: str
     env: dict[str, str] = field(default_factory=dict)
     volumes: dict[str, VolumeMount] = field(default_factory=dict)
-    ports: dict[int, int] = field(default_factory=dict)
+    ports: dict[int, int | PublishedPort] = field(default_factory=dict)
     working_dir: PurePosixPath | None = None
     command: list[str] | None = None
     devices: list[str] = field(default_factory=list)

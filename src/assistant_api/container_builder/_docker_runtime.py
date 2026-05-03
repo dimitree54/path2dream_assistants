@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from assistant_api.models import ContainerSpec, ContainerStartupTask, ImageSpec, VolumeMount
+from assistant_api.models import (
+    ContainerSpec,
+    ContainerStartupTask,
+    ImageSpec,
+    PublishedPort,
+    VolumeMount,
+)
 
 from ._dockerfile import render_dockerfile
 
@@ -187,8 +193,19 @@ def ensure_named_volumes(docker_client: Any, container_spec: ContainerSpec) -> N
             docker_client.volumes.create(name=mount.source)
 
 
-def docker_ports(ports: dict[int, int]) -> dict[str, int]:
-    return {f"{container_port}/tcp": host_port for container_port, host_port in ports.items()}
+def docker_ports(ports: dict[int, int | PublishedPort]) -> dict[str, int | tuple[str, int]]:
+    return {
+        f"{container_port}/tcp": _docker_port_binding(published_port)
+        for container_port, published_port in ports.items()
+    }
+
+
+def _docker_port_binding(published_port: int | PublishedPort) -> int | tuple[str, int]:
+    if isinstance(published_port, PublishedPort):
+        if published_port.host is None:
+            return published_port.host_port
+        return (published_port.host, published_port.host_port)
+    return published_port
 
 
 def docker_volumes(volumes: dict[str, VolumeMount]) -> dict[str, dict[str, str]]:

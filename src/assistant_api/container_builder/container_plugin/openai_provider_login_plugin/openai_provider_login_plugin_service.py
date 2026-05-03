@@ -12,6 +12,7 @@ from assistant_api.models import (
     ContainerStartupTask,
     ImageSpec,
     OpenCodeRuntimeMetadata,
+    PublishedPort,
 )
 
 from ._login_page import LOGO_ASSET_NAME, SHARED_STYLE_ASSET_NAME
@@ -33,6 +34,7 @@ class OpenAIProviderLoginPluginService:
         host_port: int,
         auth_container_port: int | None = None,
         opencode_model: str = DEFAULT_OPENCODE_MODEL,
+        host: str | None = None,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.auth_container_port = self._validate_port(
@@ -40,6 +42,7 @@ class OpenAIProviderLoginPluginService:
             auth_container_port if auth_container_port is not None else host_port,
         )
         self.opencode_model = self._validate_opencode_model(opencode_model)
+        self.host = self._validate_host(host)
         self.opencode_api_port: int | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -54,7 +57,7 @@ class OpenAIProviderLoginPluginService:
         container.env["OPENCODE_API_PORT"] = str(self.opencode_api_port)
         container.env["OPENAI_AUTH_PORT"] = str(self.auth_container_port)
         container.env["OPENCODE_MODEL"] = self.opencode_model
-        container.ports[self.auth_container_port] = self.host_port
+        container.ports[self.auth_container_port] = self._published_port()
         container.startup_tasks.append(
             ContainerStartupTask(
                 name="openai-opencode-default-model",
@@ -83,6 +86,21 @@ class OpenAIProviderLoginPluginService:
     def _validate_port(name: str, value: int) -> int:
         if not isinstance(value, int) or value < 1 or value > 65535:
             raise ConfigurationError(f"{name} must be an integer TCP port")
+        return value
+
+    def _published_port(self) -> int | PublishedPort:
+        if self.host is None:
+            return self.host_port
+        return PublishedPort(host_port=self.host_port, host=self.host)
+
+    @staticmethod
+    def _validate_host(value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            PublishedPort(host_port=1, host=value)
+        except ValueError as error:
+            raise ConfigurationError("host must be an IP address literal") from error
         return value
 
     @staticmethod

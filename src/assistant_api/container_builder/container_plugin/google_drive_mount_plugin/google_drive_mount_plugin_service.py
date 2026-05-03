@@ -18,6 +18,7 @@ from assistant_api.models import (
     ImageSpec,
     MountMetadata,
     OpenCodeRuntimeMetadata,
+    PublishedPort,
 )
 
 from ._credentials import credentials_from_env
@@ -52,6 +53,7 @@ class GoogleDriveMountPluginService:
         drive_api_base_url: str = "https://www.googleapis.com/drive/v3",
         public_base_url: str | None = None,
         enable_local_folder_import: bool = False,
+        host: str | None = None,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.auth_container_port = self._validate_port(
@@ -69,6 +71,7 @@ class GoogleDriveMountPluginService:
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
         self.public_base_url = self._validate_public_base_url(public_base_url)
         self.enable_local_folder_import = enable_local_folder_import
+        self.host = self._validate_host(host)
         if not drive_folder_name:
             raise ConfigurationError("drive_folder_name is required")
         self.folder_name = drive_folder_name
@@ -87,7 +90,7 @@ class GoogleDriveMountPluginService:
             container.state,
             container_path,
         )
-        container.ports[self.auth_container_port] = self.host_port
+        container.ports[self.auth_container_port] = self._published_port()
         container.env.update(
             {
                 "GOOGLE_DRIVE_AUTH_PORT": str(self.auth_container_port),
@@ -151,6 +154,21 @@ class GoogleDriveMountPluginService:
     def _validate_port(name: str, value: int) -> int:
         if not isinstance(value, int) or value < 1 or value > 65535:
             raise ConfigurationError(f"{name} must be an integer TCP port")
+        return value
+
+    def _published_port(self) -> int | PublishedPort:
+        if self.host is None:
+            return self.host_port
+        return PublishedPort(host_port=self.host_port, host=self.host)
+
+    @staticmethod
+    def _validate_host(value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            PublishedPort(host_port=1, host=value)
+        except ValueError as error:
+            raise ConfigurationError("host must be an IP address literal") from error
         return value
 
     @staticmethod

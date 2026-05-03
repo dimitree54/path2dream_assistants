@@ -84,6 +84,11 @@ Startup task ownership:
 
 Стандартное правило published ports:
 - plugin, который публикует user-facing service наружу container, должен принимать host/external port через init-time configuration;
+- plugin, который публикует port наружу container, может принимать optional init-time `host` bind address;
+- если `host` не задан, Docker port publishing должен сохранять default bind behavior;
+- если `host` задан, Docker должен bind published port только на этот host address;
+- `host` должен быть IP address literal, например `127.0.0.1`; invalid host bind values должны fail fast;
+- global builder-level default bind address не входит в standard published ports contract;
 - host/external port не должен требоваться через environment variables и не должен вычисляться из state другого plugin;
 - container/internal port может быть выбран самим plugin, передан через init-time configuration или взят из environment variable, если это явно задокументировано конкретным plugin.
 

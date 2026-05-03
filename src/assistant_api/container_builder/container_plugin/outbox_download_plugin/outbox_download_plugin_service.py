@@ -12,6 +12,7 @@ from assistant_api.models import (
     ContainerSpec,
     ImageSpec,
     MountMetadata,
+    PublishedPort,
 )
 
 OUTBOX_HANDLER_PATH = "/opt/notes-assistant-api/outbox_download_handler.py"
@@ -27,6 +28,7 @@ class OutboxDownloadPluginService:
         list_endpoint_path: str = "/api/outbox/list",
         download_endpoint_path: str = "/api/outbox/download",
         wait_for_mount: bool = False,
+        host: str | None = None,
     ) -> None:
         self.host_port = self._validate_port("host_port", host_port)
         self.container_port = self._validate_port(
@@ -40,6 +42,7 @@ class OutboxDownloadPluginService:
             "download_endpoint_path", download_endpoint_path
         )
         self.wait_for_mount = wait_for_mount
+        self.host = self._validate_host(host)
         self._container_path: str | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
@@ -67,7 +70,7 @@ class OutboxDownloadPluginService:
                 ],
             )
         )
-        container.ports[self.container_port] = self.host_port
+        container.ports[self.container_port] = self._published_port()
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
         mount = self._mount_metadata(runtime.state)
@@ -92,6 +95,21 @@ class OutboxDownloadPluginService:
     def _validate_port(name: str, value: int) -> int:
         if not isinstance(value, int) or value < 1 or value > 65535:
             raise ConfigurationError(f"{name} must be an integer TCP port")
+        return value
+
+    def _published_port(self) -> int | PublishedPort:
+        if self.host is None:
+            return self.host_port
+        return PublishedPort(host_port=self.host_port, host=self.host)
+
+    @staticmethod
+    def _validate_host(value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            PublishedPort(host_port=1, host=value)
+        except ValueError as error:
+            raise ConfigurationError("host must be an IP address literal") from error
         return value
 
     @staticmethod

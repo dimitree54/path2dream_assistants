@@ -43,6 +43,7 @@ class OutboxDownloadPluginService:
         list_endpoint_path: str = "/api/outbox/list",
         download_endpoint_path: str = "/api/outbox/download",
         wait_for_mount: bool = False,
+        host: str | None = None,
     ) -> None:
         pass
 ```
@@ -53,6 +54,7 @@ class OutboxDownloadPluginService:
 - `list_endpoint_path` — путь endpoint для листинга файлов внутри контейнера (по умолчанию `/api/outbox/list`);
 - `download_endpoint_path` — путь endpoint для скачивания файла внутри контейнера (по умолчанию `/api/outbox/download`).
 - `wait_for_mount` — если `False`, сервис fail fast, когда `MountMetadata.container_path` ещё не является mountpoint; если `True`, сервис ждёт mount бесконечно.
+- `host` — optional Docker host bind address; если не задан, сохраняется default Docker bind behavior.
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
@@ -90,6 +92,8 @@ During `post_start`, the service must verify inside the container that the list 
 - Outbox endpoints должны работать как container managed process (FastAPI HTTP-сервер), а не через OpenCode Server API.
 - `host_port` должен конфигурироваться через init-time параметр и публиковать container port на host.
 - `container_port` должен быть конфигурируемым; если не задан — равен `host_port`.
+- `host` должен быть optional init-time параметром для Docker host bind address; если задан, outbox endpoints должны публиковаться только на этот host address.
+- Invalid `host` bind values must fail fast.
 - List endpoint должен возвращать JSON-массив с именами файлов в директории `outbox` по GET-запросу.
 - List endpoint должен возвращать пустой массив `[]`, если директория пуста.
 - Download endpoint должен принимать имя файла как path-параметр по GET-запросу.

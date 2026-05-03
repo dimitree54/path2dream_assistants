@@ -8,7 +8,7 @@ import pytest
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin import MOUNT_METADATA_STATE_KEY
-from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec
+from assistant_api.models import ContainerRuntimeContext, ContainerSpec, ImageSpec, PublishedPort
 from inbox_upload_contract_helpers import (
     FakeContainer,
     mount_metadata,
@@ -32,11 +32,13 @@ def test_public_service_class_name_and_init_signature_defaults() -> None:
         "container_port",
         "upload_endpoint_path",
         "wait_for_mount",
+        "host",
     ]
     assert signature.parameters["host_port"].default == 8090
     assert signature.parameters["container_port"].default is None
     assert signature.parameters["upload_endpoint_path"].default == "/api/inbox/upload"
     assert signature.parameters["wait_for_mount"].default is False
+    assert signature.parameters["host"].default is None
 
 
 def test_service_implements_container_plugin_protocol() -> None:
@@ -60,6 +62,7 @@ def test_service_implements_container_plugin_protocol() -> None:
         ({"container_port": -1}, "container_port"),
         ({"container_port": 65536}, "container_port"),
         ({"container_port": "not-an-int"}, "container_port"),
+        ({"host": "localhost"}, "host"),
     ],
 )
 def test_init_rejects_invalid_ports(
@@ -212,6 +215,25 @@ def test_configure_container_publishes_container_port_to_host_port() -> None:
     )._prepare_specs()
 
     assert container_spec.ports == {container_port: host_port}
+
+
+def test_configure_container_supports_host_bind_address() -> None:
+    host_port = unused_port()
+    container_port = unused_port()
+    plugin = service_class()(
+        host_port=host_port,
+        container_port=container_port,
+        host="127.0.0.1",
+    )
+    metadata = mount_metadata()
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[_MountStatePlugin(metadata), plugin]
+    )._prepare_specs()
+
+    assert container_spec.ports == {
+        container_port: PublishedPort(host_port=host_port, host="127.0.0.1")
+    }
 
 
 def test_configure_container_managed_process_contains_endpoint_path() -> None:

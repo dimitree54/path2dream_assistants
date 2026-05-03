@@ -14,7 +14,12 @@ from assistant_api.container_builder.container_plugin.opencode_persistence_plugi
 from assistant_api.container_builder.container_plugin.opencode_server_plugin import (
     OpenCodeServerPluginService,
 )
-from assistant_api.models import ContainerRuntimeContext, ContainerSpec, OpenCodeRuntimeMetadata
+from assistant_api.models import (
+    ContainerRuntimeContext,
+    ContainerSpec,
+    OpenCodeRuntimeMetadata,
+    PublishedPort,
+)
 from openai_provider_login_contract_helpers import (
     OpenCodeRuntimeStatePlugin,
     service_class,
@@ -32,10 +37,12 @@ def test_public_service_import_and_init_signature_uses_init_ports() -> None:
         "host_port",
         "auth_container_port",
         "opencode_model",
+        "host",
     ]
     assert signature.parameters["host_port"].default is inspect.Parameter.empty
     assert signature.parameters["auth_container_port"].default is None
     assert signature.parameters["opencode_model"].default == "openai/gpt-5.5"
+    assert signature.parameters["host"].default is None
 
 
 def test_init_does_not_require_opencode_or_openai_auth_port_env(
@@ -61,6 +68,7 @@ def test_init_does_not_require_opencode_or_openai_auth_port_env(
         ({"auth_container_port": -1}, "auth_container_port"),
         ({"auth_container_port": 65536}, "auth_container_port"),
         ({"auth_container_port": "not-an-int"}, "auth_container_port"),
+        ({"host": "localhost"}, "host"),
     ],
 )
 def test_init_rejects_invalid_ports(
@@ -140,6 +148,29 @@ def test_prepare_specs_publishes_auth_port_and_env_without_persistence(
     assert container_spec.startup_tasks[0].name == "openai-opencode-default-model"
     assert container_spec.startup_tasks[0].command[-1] == "openai/gpt-5.5"
     assert "_opencode_config.py" in container_spec.startup_tasks[0].command[-2]
+
+
+def test_prepare_specs_supports_host_bind_address(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    plugin = service_class()(
+        host_port=openai_provider_env.openai_auth_port,
+        host="127.0.0.1",
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+
+    assert container_spec.ports == {
+        openai_provider_env.openai_auth_port: PublishedPort(
+            host_port=openai_provider_env.openai_auth_port,
+            host="127.0.0.1",
+        )
+    }
 
 
 def test_prepare_specs_uses_custom_opencode_model(

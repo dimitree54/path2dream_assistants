@@ -14,7 +14,7 @@ from assistant_api.container_builder.container_plugin import (
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
-from assistant_api.models import ContainerRuntimeContext, MountMetadata
+from assistant_api.models import ContainerRuntimeContext, MountMetadata, PublishedPort
 from google_drive_mount_contract_helpers import REQUIRED_ENV, auth_port, service_class, unused_port
 from google_drive_mount_oauth_stub import google_env
 
@@ -35,6 +35,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
         "drive_api_base_url",
         "public_base_url",
         "enable_local_folder_import",
+        "host",
     ]
     assert signature.parameters["host_port"].default is inspect.Parameter.empty
     assert signature.parameters["drive_folder_name"].default is inspect.Parameter.empty
@@ -57,6 +58,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
     )
     assert signature.parameters["public_base_url"].default is None
     assert signature.parameters["enable_local_folder_import"].default is False
+    assert signature.parameters["host"].default is None
 
 
 @pytest.mark.parametrize("missing_env", REQUIRED_ENV)
@@ -93,6 +95,7 @@ def test_init_does_not_require_port_or_folder_env(
         ({"auth_container_port": 0}, "auth_container_port"),
         ({"auth_container_port": 65536}, "auth_container_port"),
         ({"auth_container_port": "not-a-port"}, "auth_container_port"),
+        ({"host": "localhost"}, "host"),
     ],
 )
 def test_init_requires_valid_google_drive_auth_ports(
@@ -195,6 +198,24 @@ def test_prepare_specs_publishes_auth_port_fuse_capabilities_and_remote_metadata
     assert mount.remote_folder_id is None
     assert mount.container_path == PurePosixPath("/workspace/project")
     assert mount.mode == "rw"
+
+
+def test_prepare_specs_supports_host_bind_address(
+    google_env: str,
+) -> None:
+    host_port = auth_port()
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=google_env,
+        container_path=PurePosixPath("/workspace/project"),
+        host="127.0.0.1",
+    )
+
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+
+    assert container_spec.ports == {
+        host_port: PublishedPort(host_port=host_port, host="127.0.0.1")
+    }
 
 
 def test_prepare_specs_mounts_directly_to_workspace_by_default(

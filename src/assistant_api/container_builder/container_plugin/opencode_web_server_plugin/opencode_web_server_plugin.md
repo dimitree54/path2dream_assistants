@@ -38,6 +38,7 @@ class OpenCodeWebServerPluginService:
         host_port: int = 4096,
         container_port: int = 4096,
         wait_for_mount: bool = False,
+        host: str | None = None,
     ) -> None:
         pass
 ```
@@ -67,6 +68,9 @@ opencode web --hostname 0.0.0.0 --port <container_port>
 - `host_port` must be configured through init-time configuration and must be used as the host/external port for OpenCode Web.
 - `container_port` must be the container-local OpenCode Web and API port.
 - `wait_for_mount` must default to `False`.
+- `host` must be optional init-time configuration for Docker host bind address; when omitted, Docker default bind behavior must be preserved.
+- If `host` is provided, the published OpenCode Web port must bind only to that host address.
+- Invalid `host` bind values must fail fast.
 - The service must not configure persistence.
 - The service must not mount host directories.
 - If no working directory was set by previous plugins, the service must use `/workspace`.

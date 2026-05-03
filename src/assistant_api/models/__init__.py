@@ -8,6 +8,7 @@ from .container_startup_task import ContainerStartupTask
 from .image_spec import ImageSpec
 from .mount_metadata import MountMetadata, MountSourceType
 from .opencode_runtime_metadata import OpenCodeRuntimeMetadata
+from .published_port import PublishedPort
 from .running_container import RunningContainer
 from .volume_mount import VolumeMount, VolumeType
 
@@ -21,6 +22,7 @@ __all__ = [
     "MountMetadata",
     "MountSourceType",
     "OpenCodeRuntimeMetadata",
+    "PublishedPort",
     "RunningContainer",
     "VolumeMount",
     "VolumeType",

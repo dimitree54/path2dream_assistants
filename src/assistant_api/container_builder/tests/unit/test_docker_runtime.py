@@ -17,6 +17,7 @@ from assistant_api.models import (
     ContainerSpec,
     ContainerStartupTask,
     ImageSpec,
+    PublishedPort,
     VolumeMount,
 )
 
@@ -27,6 +28,9 @@ def test_default_command_keeps_minimal_container_running() -> None:
 
 def test_docker_helpers_render_expected_shapes() -> None:
     assert docker_ports({4096: 4097}) == {"4096/tcp": 4097}
+    assert docker_ports({4096: PublishedPort(host_port=4097, host="127.0.0.1")}) == {
+        "4096/tcp": ("127.0.0.1", 4097)
+    }
     assert docker_volumes(
         {
             "/tmp/project": VolumeMount(
