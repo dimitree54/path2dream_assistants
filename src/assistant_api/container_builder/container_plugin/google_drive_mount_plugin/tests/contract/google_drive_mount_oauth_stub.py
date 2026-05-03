@@ -16,6 +16,8 @@ from google_drive_mount_contract_helpers import GOOGLE_DRIVE_FILE_SCOPE
 class OAuthDriveState:
     expected_folder_name: str
     existing_folder_id: str | None = None
+    existing_folders: list[dict[str, Any]] = field(default_factory=list)
+    root_folder_id: str = "root"
     oauth_denied: bool = False
     token_failure: bool = False
     drive_failure: bool = False
@@ -59,6 +61,29 @@ class OAuthDriveStub:
         self.server.server_close()
 
 
+def _parse_query(query_string: str) -> dict[str, Any]:
+    """Parse a simple Google Drive query string like "name = 'notes' and mimeType = 'folder'". Returns dict of conditions."""
+    conditions = {}
+    if not query_string:
+        return conditions
+    parts = query_string.split(" and ")
+    for part in parts:
+        part = part.strip()
+        if "=" in part:
+            key, value = part.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'")
+            if key == "name":
+                conditions["name"] = value
+            elif key == "mimeType":
+                conditions["mimeType"] = value
+            elif key == "trashed":
+                conditions["trashed"] = value.lower() == "true"
+        elif "'root' in parents" in part:
+            conditions["root_parent"] = True
+    return conditions
+
+
 def _make_handler() -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -86,13 +111,32 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
                 if state.drive_failure:
                     self._send_json(500, {"error": {"message": "drive failure"}})
                     return
+                q = query.get("q", [""])[0]
+                conditions = _parse_query(q)
                 files = []
-                if state.existing_folder_id:
+                # If we have existing_folders list, filter based on conditions
+                if state.existing_folders:
+                    for folder in state.existing_folders:
+                        match = True
+                        if "name" in conditions and folder.get("name") != conditions["name"]:
+                            match = False
+                        if "mimeType" in conditions and folder.get("mimeType") != conditions["mimeType"]:
+                            match = False
+                        if "root_parent" in conditions and conditions["root_parent"]:
+                            # Check if folder is direct child of root
+                            parents = folder.get("parents", [])
+                            if state.root_folder_id not in parents:
+                                match = False
+                        if match:
+                            files.append(folder)
+                elif state.existing_folder_id:
+                    # Legacy single folder support: treat as root-level folder
                     files.append(
                         {
                             "id": state.existing_folder_id,
                             "name": state.expected_folder_name,
                             "mimeType": "application/vnd.google-apps.folder",
+                            "parents": [state.root_folder_id],
                         }
                     )
                 self._send_json(200, {"files": files})

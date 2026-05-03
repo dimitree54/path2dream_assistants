@@ -281,3 +281,143 @@ def _shared_page_style() -> str:
         .joinpath("assets", SHARED_STYLE_ASSET_NAME)
         .read_text(encoding="utf-8")
     )
+
+
+def test_oauth_callback_selects_root_level_folder_when_multiple_folders_exist(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+) -> None:
+    """Should select the root-level folder when there are multiple folders but only one root-level."""
+    # Add a nested folder (non-root-level) and a root-level folder
+    oauth_drive_stub.state.existing_folders = [
+        {
+            "id": "nested-folder-id",
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["some-other-parent-id"],  # Not root
+        },
+        {
+            "id": "root-folder-id",
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [oauth_drive_stub.state.root_folder_id],  # Root
+        },
+    ]
+    host_port = auth_port()
+    container_path = PurePosixPath(str(tmp_path / "project"))
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=container_path,
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    callback = complete_oauth_flow(host_port)
+
+    assert callback.status in {200, 302, 303}
+    assert status_json(host_port)["mounted"] is True
+    assert_rclone_config_precedes_mount(
+        fake_rclone,
+        remote_name="gdrive",
+        folder_id="root-folder-id",
+        container_path=container_path,
+    )
+
+
+def test_oauth_callback_fails_when_multiple_root_level_folders_exist(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+) -> None:
+    """Should fail fast when multiple root-level folders with the same name exist."""
+    oauth_drive_stub.state.existing_folders = [
+        {
+            "id": "root-folder-1",
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [oauth_drive_stub.state.root_folder_id],
+        },
+        {
+            "id": "root-folder-2",
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [oauth_drive_stub.state.root_folder_id],
+        },
+    ]
+    host_port = auth_port()
+    container_path = PurePosixPath(str(tmp_path / "project"))
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=container_path,
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    callback = complete_oauth_flow(host_port)
+
+    # Should fail with an error (500 or error page)
+    assert callback.status == 500 or "error" in callback.text.lower()
+    assert status_json(host_port)["state"] == "error"
+    assert status_json(host_port)["mounted"] is False
+
+
+def test_oauth_callback_ignores_nested_folders_and_selects_root_level(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+) -> None:
+    """Should ignore nested folders and select the root-level folder."""
+    # Only nested folders, no root-level folder -> should create a new one
+    oauth_drive_stub.state.existing_folders = [
+        {
+            "id": "nested-folder-1",
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["some-other-parent-id"],
+        },
+        {
+            "id": "nested-folder-2",
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["another-parent-id"],
+        },
+    ]
+    host_port = auth_port()
+    container_path = PurePosixPath(str(tmp_path / "project"))
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=container_path,
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    callback = complete_oauth_flow(host_port)
+
+    assert callback.status in {200, 302, 303}
+    assert status_json(host_port)["mounted"] is True
+    # Should create a new folder since no root-level folder exists
+    assert oauth_drive_stub.state.created_folders == [
+        {
+            "name": oauth_drive_stub.state.expected_folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+    ]
+    assert_rclone_config_precedes_mount(
+        fake_rclone,
+        remote_name="gdrive",
+        folder_id=oauth_drive_stub.state.created_folder_id,
+        container_path=container_path,
+    )

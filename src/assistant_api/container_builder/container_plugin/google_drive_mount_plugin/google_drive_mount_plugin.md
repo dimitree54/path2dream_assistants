@@ -61,6 +61,8 @@ class GoogleDriveMountPluginService:
         pass
 ```
 
+The `drive_folder_name` parameter is used to search for or create the app-owned folder in Google Drive. When searching for existing folders, only root-level folders (direct children of `My Drive`) are considered. If multiple root-level folders with the same name exist, the service must fail fast with a clear error.
+
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
@@ -110,6 +112,8 @@ Local folder import must only accept requests when Google Drive is already authe
 
 The mounted folder is app-owned from the OAuth perspective. User-visible Drive operations such as viewing, downloading, renaming, moving, or deleting files are part of the supported model. Automatic access to arbitrary files that the user manually adds through Google Drive UI is not part of this contract unless those files are explicitly opened, selected, shared, or otherwise authorized for this app under the same minimal-scope access model.
 
+To ensure deterministic folder selection across multiple devices and deployments, the service must only consider root-level folders (direct children of `My Drive`) when searching for existing app-owned folders. If multiple root-level folders with the same name exist, the service must fail fast with a clear error instead of selecting an arbitrary folder.
+
 # Google OAuth credentials
 Google OAuth Web client credentials must be provided through `GOOGLE_OAUTH_CLIENT_CREDENTIALS_JSON`.
 
@@ -151,6 +155,8 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - The service must not request full-drive scopes such as `https://www.googleapis.com/auth/drive`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.metadata`, or `https://www.googleapis.com/auth/drive.metadata.readonly`.
 - The service must not use `https://www.googleapis.com/auth/drive.appdata` or `https://www.googleapis.com/auth/drive.appfolder` as the mounted file storage scope because the mounted files must be visible to the user in Google Drive UI.
 - The service must create or reuse a dedicated app-owned folder in the user's `My Drive` using `drive_folder_name`.
+- When searching for existing app-owned folders, the service must only consider folders that are direct children of the user's `My Drive` root folder.
+- If multiple root-level folders with the configured `drive_folder_name` exist, the service must fail fast with a clear error instead of selecting an arbitrary folder.
 - The mounted rclone remote root must be restricted to this dedicated app-owned folder, not the user's whole `My Drive`.
 - The service must fail fast if the dedicated app-owned folder cannot be created, found, authorized, or mounted.
 - `/login` must return a production-ready HTML login page that lets the user authorize Google Drive in a browser.

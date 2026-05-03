@@ -280,6 +280,7 @@ class GoogleDriveMountAuthServer:
                         f"name = '{self.folder_name}'",
                         "mimeType = 'application/vnd.google-apps.folder'",
                         "trashed = false",
+                        "'root' in parents",
                     ]
                 ),
                 "fields": "files(id,name,mimeType)",
@@ -291,6 +292,11 @@ class GoogleDriveMountAuthServer:
         if not isinstance(files, list):
             raise GoogleDriveMountAuthError("Google Drive folder search response did not include files.")
         if files:
+            if len(files) > 1:
+                raise GoogleDriveMountAuthError(
+                    f"Multiple root-level Google Drive folders named '{self.folder_name}' "
+                    f"already exist. Remove the duplicates in My Drive and try again."
+                )
             folder_id = files[0].get("id")
             if isinstance(folder_id, str) and folder_id:
                 return folder_id
