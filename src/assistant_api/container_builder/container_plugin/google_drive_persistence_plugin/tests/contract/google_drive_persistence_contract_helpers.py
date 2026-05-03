@@ -116,6 +116,7 @@ def start_mount_plugin(
         drive_folder_name=plugin.folder_name,
         container_path=plugin.container_path,
         remote_name=plugin.remote_name,
+        mode=plugin.mode,
         oauth_authorize_url=plugin.oauth_authorize_url,
         oauth_token_url=plugin.oauth_token_url,
         drive_api_base_url=plugin.drive_api_base_url,
@@ -240,6 +241,21 @@ if args[:1] == ["lsf"]:
     if f"[{remote}]" not in config_path.read_text(encoding="utf-8"):
         print("configured remote does not exist", file=sys.stderr)
         raise SystemExit(83)
+    raise SystemExit(0)
+if args[:1] == ["cat"]:
+    if not config_path.exists():
+        print("rclone config does not exist", file=sys.stderr)
+        raise SystemExit(82)
+    remote = args[1].split(":", 1)[0] if len(args) > 1 else ""
+    if f"[{remote}]" not in config_path.read_text(encoding="utf-8"):
+        print("configured remote does not exist", file=sys.stderr)
+        raise SystemExit(83)
+    print("ok", end="")
+    raise SystemExit(0)
+if args[:1] == ["deletefile"]:
+    if not config_path.exists():
+        print("rclone config does not exist", file=sys.stderr)
+        raise SystemExit(82)
     raise SystemExit(0)
 if args[:1] in [["unmount"], ["cleanup"]]:
     mount_marker.unlink(missing_ok=True)
