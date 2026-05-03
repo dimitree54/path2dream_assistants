@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import argparse
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,7 @@ RCLONE_DRIVE_FILE_SCOPE = "drive.file"
 RCLONE_POLL_INTERVAL = "10m"
 RCLONE_VFS_CACHE_MODE = "writes"
 RCLONE_VFS_WRITE_BACK = "5s"
+REMOTE_WRITE_PROBE_TIMEOUT_SECONDS = 20
 
 GoogleDriveMountState = Literal["unauthenticated", "authenticating", "authenticated", "mounting", "mounted", "error"]
 
@@ -61,6 +63,7 @@ class GoogleDriveMountAuthServer:
         drive_folder_name: str,
         container_path: PurePosixPath,
         remote_name: str,
+        mode: str,
         oauth_authorize_url: str,
         oauth_token_url: str,
         drive_api_base_url: str,
@@ -73,6 +76,7 @@ class GoogleDriveMountAuthServer:
         self.folder_name = drive_folder_name
         self.container_path = container_path
         self.remote_name = remote_name
+        self.mode = mode
         self.oauth_authorize_url = oauth_authorize_url
         self.oauth_token_url = oauth_token_url
         self.drive_api_base_url = drive_api_base_url.rstrip("/")
@@ -416,6 +420,51 @@ class GoogleDriveMountAuthServer:
     def _verify_mount_health(self) -> None:
         self._verify_mountpoint()
         self._verify_remote_readable()
+        if self.mode != "ro":
+            self._verify_remote_write_through_mount()
+
+    def _verify_remote_write_through_mount(self) -> None:
+        probe_name = f".notes-assistant-gdrive-upload-health-{os.getpid()}-{secrets.token_hex(8)}"
+        probe_path = Path(self.container_path) / probe_name
+        remote_path = f"{self.remote_name}:{probe_name}"
+        content = "ok"
+        try:
+            probe_path.write_text(content, encoding="utf-8")
+            timeout_seconds = float(
+                os.environ.get(
+                    "GOOGLE_DRIVE_REMOTE_WRITE_PROBE_TIMEOUT_SECONDS",
+                    str(REMOTE_WRITE_PROBE_TIMEOUT_SECONDS),
+                )
+            )
+            deadline = time.monotonic() + timeout_seconds
+            last_error = "remote write probe did not run"
+            while time.monotonic() < deadline:
+                result = subprocess.run(
+                    ["rclone", "cat", remote_path],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0 and result.stdout == content:
+                    return
+                last_error = (result.stderr or result.stdout or "remote content mismatch").strip()
+                time.sleep(1)
+            raise GoogleDriveMountAuthError(
+                "Google Drive remote write verification failed: "
+                f"probe file was not readable from remote storage: {last_error}"
+            )
+        except OSError as error:
+            raise GoogleDriveMountAuthError(
+                f"Google Drive mount write verification failed: {error}"
+            ) from error
+        finally:
+            subprocess.run(["rclone", "deletefile", remote_path], check=False)
+            try:
+                probe_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                subprocess.run(["rclone", "cleanup", f"{self.remote_name}:"], check=False)
 
     def _restore_persisted_mount(self) -> None:
         config_path = _rclone_config_path()
@@ -724,6 +773,7 @@ def main() -> None:
             drive_folder_name=_required_env("GOOGLE_DRIVE_MOUNT_FOLDER_NAME"),
             container_path=PurePosixPath(_required_env("GOOGLE_DRIVE_MOUNT_CONTAINER_PATH")),
             remote_name=_required_env("GOOGLE_DRIVE_REMOTE_NAME"),
+            mode=_required_env("GOOGLE_DRIVE_MOUNT_MODE"),
             oauth_authorize_url=_required_env("GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL"),
             oauth_token_url=_required_env("GOOGLE_DRIVE_OAUTH_TOKEN_URL"),
             drive_api_base_url=_required_env("GOOGLE_DRIVE_API_BASE_URL"),

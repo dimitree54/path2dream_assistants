@@ -29,6 +29,7 @@ from google_drive_mount_rclone_stub import FakeRclone, fake_rclone, start_plugin
         "rclone_failure",
         "mountpoint_failure",
         "remote_probe_failure",
+        "remote_write_probe_failure",
         "non_empty_mount_target",
     ],
 )
@@ -47,6 +48,9 @@ def test_flow_failures_report_error_and_never_fallback_to_local_mount(
         monkeypatch.setenv("FAKE_MOUNTPOINT_FAIL", "1")
     if failure_name == "remote_probe_failure":
         monkeypatch.setenv("FAKE_RCLONE_FAIL_LSF", "1")
+    if failure_name == "remote_write_probe_failure":
+        monkeypatch.setenv("FAKE_RCLONE_FAIL_CAT", "1")
+        monkeypatch.setenv("GOOGLE_DRIVE_REMOTE_WRITE_PROBE_TIMEOUT_SECONDS", "0.1")
     container_path = PurePosixPath(tmp_path / "project")
     if failure_name == "non_empty_mount_target":
         target = Path(container_path)
@@ -72,6 +76,7 @@ def test_flow_failures_report_error_and_never_fallback_to_local_mount(
         "rclone_failure",
         "mountpoint_failure",
         "remote_probe_failure",
+        "remote_write_probe_failure",
     }
 
 
@@ -93,6 +98,7 @@ def test_restore_persisted_mount_exits_nonzero_when_remote_probe_fails(
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_FOLDER_NAME", google_env)
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_CONTAINER_PATH", str(tmp_path / "project"))
     monkeypatch.setenv("GOOGLE_DRIVE_REMOTE_NAME", "gdrive")
+    monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_MODE", "rw")
     monkeypatch.setenv("GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL", "http://127.0.0.1:1/oauth/authorize")
     monkeypatch.setenv("GOOGLE_DRIVE_OAUTH_TOKEN_URL", "http://127.0.0.1:1/oauth/token")
     monkeypatch.setenv("GOOGLE_DRIVE_API_BASE_URL", "http://127.0.0.1:1/drive/v3")
@@ -139,6 +145,7 @@ def test_restore_persisted_mount_normalizes_legacy_token_expiry(
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_FOLDER_NAME", google_env)
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_CONTAINER_PATH", str(tmp_path / "project"))
     monkeypatch.setenv("GOOGLE_DRIVE_REMOTE_NAME", "gdrive")
+    monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_MODE", "rw")
     monkeypatch.setenv("GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL", "http://127.0.0.1:1/oauth/authorize")
     monkeypatch.setenv("GOOGLE_DRIVE_OAUTH_TOKEN_URL", "http://127.0.0.1:1/oauth/token")
     monkeypatch.setenv("GOOGLE_DRIVE_API_BASE_URL", "http://127.0.0.1:1/drive/v3")
@@ -190,6 +197,7 @@ def test_restore_persisted_mount_forces_refresh_after_invalid_access_token(
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_FOLDER_NAME", google_env)
     monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_CONTAINER_PATH", str(tmp_path / "project"))
     monkeypatch.setenv("GOOGLE_DRIVE_REMOTE_NAME", "gdrive")
+    monkeypatch.setenv("GOOGLE_DRIVE_MOUNT_MODE", "rw")
     monkeypatch.setenv("GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL", "http://127.0.0.1:1/oauth/authorize")
     monkeypatch.setenv("GOOGLE_DRIVE_OAUTH_TOKEN_URL", "http://127.0.0.1:1/oauth/token")
     monkeypatch.setenv("GOOGLE_DRIVE_API_BASE_URL", "http://127.0.0.1:1/drive/v3")

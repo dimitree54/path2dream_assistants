@@ -72,6 +72,7 @@ def start_plugin(
         drive_folder_name=plugin.folder_name,
         container_path=plugin.container_path,
         remote_name=plugin.remote_name,
+        mode=plugin.mode,
         oauth_authorize_url=plugin.oauth_authorize_url,
         oauth_token_url=plugin.oauth_token_url,
         drive_api_base_url=plugin.drive_api_base_url,
@@ -137,6 +138,18 @@ if args[0] == "lsf":
         if '"expiry": "1970-01-01T00:00:00Z"' not in config_text:
             print("Invalid Credentials", file=sys.stderr)
             raise SystemExit(55)
+    if not config_marker.exists():
+        raise SystemExit(52)
+    raise SystemExit(0)
+if args[0] == "cat":
+    if os.environ.get("FAKE_RCLONE_FAIL_CAT") == "1":
+        print("remote cat failed", file=sys.stderr)
+        raise SystemExit(56)
+    if not config_marker.exists():
+        raise SystemExit(52)
+    print("ok", end="")
+    raise SystemExit(0)
+if args[0] == "deletefile":
     if not config_marker.exists():
         raise SystemExit(52)
     raise SystemExit(0)

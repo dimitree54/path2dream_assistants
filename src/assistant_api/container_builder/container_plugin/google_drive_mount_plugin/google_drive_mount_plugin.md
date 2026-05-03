@@ -159,6 +159,7 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - If multiple root-level folders with the configured `drive_folder_name` exist, the service must fail fast with a clear error instead of selecting an arbitrary folder.
 - The mounted rclone remote root must be restricted to this dedicated app-owned folder, not the user's whole `My Drive`.
 - The service must fail fast if the dedicated app-owned folder cannot be created, found, authorized, or mounted.
+- Mounted read-write state must require a write-through verification: the service must write a hidden probe file through the mounted filesystem, verify the same content through the configured rclone remote, and remove the probe. A file that exists only in rclone VFS cache and is not readable from the remote is not a healthy mounted state.
 - `/login` must return a production-ready HTML login page that lets the user authorize Google Drive in a browser.
 - When Google Drive is already mounted, `/login` must return the mounted success page instead of restarting OAuth.
 - `/login` must not be a plain text page or a bare authorization link; it must provide a proper title, polished visual layout, clear Google Drive authorization copy, and a primary call-to-action.
@@ -199,6 +200,7 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - Cached VFS writes must use an explicit write-back delay of `5s` before upload to Google Drive after file changes are closed/flushed.
 - `/status` must report `mounted=true` only after `rclone mount` starts successfully and the container path is verified as a mountpoint.
 - Mounted state must also require a successful read-only remote probe against the configured rclone remote.
+- Mounted read-write state must also require a successful mount-to-remote upload probe against the configured rclone remote. If the probe file cannot be read back from Google Drive remote storage after the configured write-back delay, the service must fail fast instead of reporting `mounted=true`.
 - The service must request Docker runtime capabilities required for FUSE, including `/dev/fuse`, `cap_add`, and security options.
 - The service must record `MountMetadata` so mount-aware plugins can use it.
 - Google Drive `MountMetadata` must identify the remote mount source using `remote_name`, use the Google Drive folder name as its display basename, and must not imply a local host directory.

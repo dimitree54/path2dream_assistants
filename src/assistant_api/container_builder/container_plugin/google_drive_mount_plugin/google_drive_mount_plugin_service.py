@@ -98,6 +98,7 @@ class GoogleDriveMountPluginService:
                 "GOOGLE_DRIVE_MOUNT_FOLDER_NAME": self.folder_name,
                 "GOOGLE_DRIVE_MOUNT_CONTAINER_PATH": str(container_path),
                 "GOOGLE_DRIVE_REMOTE_NAME": self.remote_name,
+                "GOOGLE_DRIVE_MOUNT_MODE": self.mode,
                 "GOOGLE_DRIVE_OAUTH_AUTHORIZE_URL": self.oauth_authorize_url,
                 "GOOGLE_DRIVE_OAUTH_TOKEN_URL": self.oauth_token_url,
                 "GOOGLE_DRIVE_API_BASE_URL": self.drive_api_base_url,
@@ -342,11 +343,23 @@ def _auth_status_health_command(
         "    subprocess.run(['rclone', 'lsf', f'{remote_name}:'], check=True, capture_output=True, text=True)\n"
         "    if mode != 'ro':\n"
         "        probe = container_path / f'.notes-assistant-gdrive-health-{os.getpid()}'\n"
+        "        remote_probe = f'{remote_name}:{probe.name}'\n"
         "        try:\n"
         "            probe.write_text('ok', encoding='utf-8')\n"
         "            if probe.read_text(encoding='utf-8') != 'ok':\n"
         "                raise RuntimeError('mount write probe content mismatch')\n"
+        "            deadline = time.monotonic() + 20\n"
+        "            last_error = 'remote write probe did not run'\n"
+        "            while time.monotonic() < deadline:\n"
+        "                result = subprocess.run(['rclone', 'cat', remote_probe], check=False, capture_output=True, text=True)\n"
+        "                if result.returncode == 0 and result.stdout == 'ok':\n"
+        "                    break\n"
+        "                last_error = (result.stderr or result.stdout or 'remote content mismatch').strip()\n"
+        "                time.sleep(1)\n"
+        "            else:\n"
+        "                raise RuntimeError(f'mount write probe was not readable from remote storage: {last_error}')\n"
         "        finally:\n"
+        "            subprocess.run(['rclone', 'deletefile', remote_probe], check=False)\n"
         "            try:\n"
         "                probe.unlink()\n"
         "            except FileNotFoundError:\n"
