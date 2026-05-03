@@ -29,6 +29,7 @@ class OpenCodeProviderState:
     callback_failure: bool = False
     callback_connects_auth: bool = True
     provider_requests: int = 0
+    provider_request_auth_present: list[bool] = field(default_factory=list)
     auth_requests: int = 0
     authorize_requests: list[dict[str, Any]] = field(default_factory=list)
     callback_requests: list[dict[str, Any]] = field(default_factory=list)
@@ -103,6 +104,7 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
                 return
             if parsed.path == "/provider":
                 state.provider_requests += 1
+                state.provider_request_auth_present.append(_openai_auth_file_exists())
                 self._send_json(200, state.provider_payload())
                 return
             if parsed.path == "/provider/auth":
@@ -160,6 +162,16 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
             self.wfile.write(body)
 
     return Handler
+
+
+def _openai_auth_file_exists() -> bool:
+    data_home = os.environ.get("XDG_DATA_HOME")
+    if data_home:
+        return (Path(data_home) / "opencode" / "auth.json").exists()
+    home = os.environ.get("HOME")
+    if home:
+        return (Path(home) / ".local" / "share" / "opencode" / "auth.json").exists()
+    return False
 
 
 @pytest.fixture

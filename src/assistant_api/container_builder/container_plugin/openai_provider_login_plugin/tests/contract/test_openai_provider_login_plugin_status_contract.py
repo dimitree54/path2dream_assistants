@@ -44,7 +44,7 @@ def test_startup_fails_when_opencode_server_is_unavailable(
         start_plugin(plugin, container_spec.state)
 
 
-def test_startup_fails_when_openai_provider_is_missing(
+def test_startup_does_not_probe_openai_provider_before_auth_credentials_exist(
     openai_provider_env: OpenAIProviderEnv,
     opencode_provider_stub: OpenCodeProviderStub,
 ) -> None:
@@ -54,8 +54,29 @@ def test_startup_fails_when_openai_provider_is_missing(
         plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
     )._prepare_specs()
 
-    with pytest.raises(OpenAIProviderLoginError, match="openai"):
-        start_plugin(plugin, container_spec.state)
+    start_plugin(plugin, container_spec.state)
+    status = status_json(port=openai_provider_env.openai_auth_port)
+
+    assert status["state"] == "unauthenticated"
+    assert opencode_provider_stub.state.provider_requests == 0
+    assert opencode_provider_stub.state.auth_requests == 1
+
+
+def test_status_without_openai_auth_credentials_does_not_call_provider(
+    openai_provider_env: OpenAIProviderEnv,
+    opencode_provider_stub: OpenCodeProviderStub,
+) -> None:
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
+    start_plugin(plugin, container_spec.state)
+
+    status = status_json(port=openai_provider_env.openai_auth_port)
+
+    assert status["state"] == "unauthenticated"
+    assert status["authValid"] is False
+    assert opencode_provider_stub.state.provider_requests == 0
 
 
 def test_startup_fails_when_headless_openai_oauth_is_missing(
@@ -112,6 +133,7 @@ def test_status_does_not_report_authenticated_when_provider_is_only_connected(
 
 def test_status_reports_authenticated_when_openai_oauth_credentials_exist(
     openai_provider_env: OpenAIProviderEnv,
+    opencode_provider_stub: OpenCodeProviderStub,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -130,6 +152,29 @@ def test_status_reports_authenticated_when_openai_oauth_credentials_exist(
     assert status["authValid"] is True
     assert status["state"] == "authenticated"
     assert "oauth" in status["message"]
+    assert opencode_provider_stub.state.provider_requests >= 1
+    assert all(opencode_provider_stub.state.provider_request_auth_present)
+
+
+def test_status_fails_fast_when_authenticated_provider_payload_has_no_openai(
+    openai_provider_env: OpenAIProviderEnv,
+    opencode_provider_stub: OpenCodeProviderStub,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_home = tmp_path / "share"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    write_openai_oauth_auth(data_home)
+    opencode_provider_stub.state.include_openai_provider = False
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
+
+    with pytest.raises(RuntimeError, match="OpenAI provider login health check failed"):
+        start_plugin(plugin, container_spec.state)
+
+    assert all(opencode_provider_stub.state.provider_request_auth_present)
 
 
 def test_later_opencode_outage_reports_unavailable_json(

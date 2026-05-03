@@ -76,12 +76,6 @@ class OpenAIProviderAuthServer:
 
     def _validate_startup(self) -> None:
         self._request_json("GET", "/global/health", "OpenCode server is unavailable")
-        provider_payload = self._request_json(
-            "GET", "/provider", "OpenCode provider list is unavailable"
-        )
-        provider = self._find_openai_provider(provider_payload)
-        provider_name = provider.get("name")
-        self.provider_name = provider_name if isinstance(provider_name, str) else PROVIDER_NAME
         auth_payload = self._request_json(
             "GET", "/provider/auth", "OpenCode provider auth list is unavailable"
         )
@@ -162,13 +156,16 @@ class OpenAIProviderAuthServer:
         return status, "application/json", json.dumps(payload)
 
     def _status_payload(self) -> dict[str, Any]:
-        provider_payload = self._request_json(
-            "GET", "/provider", "OpenCode provider status is unavailable"
-        )
-        self._find_openai_provider(provider_payload)
+        self._request_json("GET", "/global/health", "OpenCode server is unavailable")
         auth_method = _openai_auth_method()
         self._auth_valid = auth_method is not None
         if self._auth_valid:
+            provider_payload = self._request_json(
+                "GET", "/provider", "OpenCode provider status is unavailable"
+            )
+            provider = self._find_openai_provider(provider_payload)
+            provider_name = provider.get("name")
+            self.provider_name = provider_name if isinstance(provider_name, str) else PROVIDER_NAME
             self._state = "authenticated"
             self._message = f"OpenAI provider is authenticated through OpenCode {auth_method} credentials."
             self._pending_authorize = None
@@ -315,10 +312,6 @@ def _openai_auth_method() -> str | None:
         ):
             return "oauth"
         raise OpenAIProviderLoginError("OpenCode OpenAI OAuth credentials are incomplete")
-    if auth_type == "api":
-        if _non_empty_string(auth_info.get("key")):
-            return "api"
-        raise OpenAIProviderLoginError("OpenCode OpenAI API key credentials are incomplete")
     raise OpenAIProviderLoginError("OpenCode OpenAI auth credentials have unsupported type")
 
 

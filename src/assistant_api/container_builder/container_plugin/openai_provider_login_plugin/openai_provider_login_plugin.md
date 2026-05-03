@@ -70,8 +70,8 @@ Published endpoints:
 
 OpenCode provider endpoints used by this service:
 - `GET /global/health`;
-- `GET /provider`;
 - `GET /provider/auth`;
+- `GET /provider`, only after OpenCode auth storage contains real OpenAI credentials;
 - `POST /provider/{provider_id}/oauth/authorize`;
 - `POST /provider/{provider_id}/oauth/callback`.
 
@@ -101,7 +101,9 @@ OpenCode provider endpoints used by this service:
 - Browser redirect OAuth flow is not the production contract for remote containers.
 - `/status` must return JSON with at least `authValid`, `state`, `message`, and `providerName`.
 - `/status.state` must be one of `unavailable`, `unauthenticated`, `authenticated`, or `error`.
-- On status check, it should use OpenCode server API to check that the OpenAI provider is available, and OpenCode auth storage to check that real OpenAI credentials are present.
+- On status check, it must check OpenCode auth storage for real OpenAI credentials before calling OpenCode `/provider`.
+- When OpenCode auth storage does not contain real OpenAI credentials, `/status` must report unauthenticated without calling OpenCode `/provider`.
+- When OpenCode auth storage contains real OpenAI credentials, `/status` should use OpenCode `/provider` to check that the OpenAI provider is available.
 - `/status.authValid=true` must require valid OpenCode `openai` auth credentials in `~/.local/share/opencode/auth.json` or equivalent OpenCode auth content. OpenCode `/provider.connected` alone must not be treated as successful auth.
 - Provider auth must be checked against the local OpenCode API URL derived from OpenCode runtime metadata.
 - The service must accept the OpenAI model name for OpenCode through init-time configuration as `opencode_model`.
@@ -109,7 +111,8 @@ OpenCode provider endpoints used by this service:
 - After successful OpenAI provider auth, OpenCode must be configured to use `opencode_model` as its default OpenAI model.
 - After successful OpenAI provider auth, OpenCode API calls made without an explicit model must use `opencode_model`.
 - Missing OpenCode server availability at startup must lead to fail fast.
-- Missing OpenAI provider in OpenCode `/provider` response must lead to fail fast.
+- The auth server must not call OpenCode `/provider` during startup before real OpenAI auth credentials exist, because that can initialize stale OpenCode provider runtime state.
+- Missing OpenAI provider in OpenCode `/provider` response after real OpenAI auth credentials exist must lead to fail fast.
 - Missing headless OAuth method for OpenAI in OpenCode `/provider/auth` response must lead to fail fast.
 - The auth server startup must not impose a hard timeout when waiting for OpenCode health; failure detection is delegated to `post_start` (`/status` health check) and the auth server's internal startup validation (`_validate_startup`).
 - The service must fail fast if its container-local `/status` endpoint does not become healthy after the managed auth process starts.

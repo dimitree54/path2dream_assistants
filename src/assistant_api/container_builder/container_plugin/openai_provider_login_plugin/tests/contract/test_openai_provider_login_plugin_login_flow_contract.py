@@ -165,6 +165,8 @@ def test_automatic_headless_callback_completion_reports_authenticated(
     assert "OPENAI-CONTRACT-CODE" not in automatic_completion.text
     assert status["authValid"] is True
     assert opencode_provider_stub.state.callback_requests == [{"method": 1}]
+    assert opencode_provider_stub.state.provider_requests >= 1
+    assert all(opencode_provider_stub.state.provider_request_auth_present)
     config = json.loads(
         tmp_path.joinpath("config", "opencode", "opencode.json").read_text(
             encoding="utf-8"
