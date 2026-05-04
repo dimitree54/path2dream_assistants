@@ -66,6 +66,8 @@ def test_mount_plugin_restores_valid_persisted_auth_without_browser_login(
     config_file = config_dir / "rclone.conf"
     write_rclone_config(config_file)
     persistence_plugin = persistence_service_class()(
+        config_volume="test_gd_config",
+        cache_volume="test_gd_cache",
         config_dir=PurePosixPath(config_dir),
         cache_dir=PurePosixPath(cache_dir),
     )
@@ -102,6 +104,8 @@ def test_mount_plugin_keeps_login_logout_and_status_routes_when_persistence_is_c
     fake_persistent_rclone: FakePersistentRclone,
 ) -> None:
     persistence_plugin = persistence_service_class()(
+        config_volume="test_gd_config",
+        cache_volume="test_gd_cache",
         config_dir=PurePosixPath(tmp_path / "empty-config"),
         cache_dir=PurePosixPath(tmp_path / "cache"),
     )
@@ -141,6 +145,8 @@ def test_logout_clears_only_configured_remote_from_persisted_rclone_config(
     config_file = config_dir / "rclone.conf"
     write_rclone_config(config_file)
     persistence_plugin = persistence_service_class()(
+        config_volume="test_gd_config",
+        cache_volume="test_gd_cache",
         config_dir=PurePosixPath(config_dir),
         cache_dir=PurePosixPath(cache_dir),
     )
@@ -182,6 +188,8 @@ def test_mount_plugin_fails_fast_when_persisted_rclone_config_path_cannot_be_use
     blocked_config_dir = tmp_path / "blocked-config-dir"
     blocked_config_dir.write_text("this path is a file, not a directory", encoding="utf-8")
     persistence_plugin = persistence_service_class()(
+        config_volume="test_gd_config",
+        cache_volume="test_gd_cache",
         config_dir=PurePosixPath(blocked_config_dir),
         cache_dir=PurePosixPath(tmp_path / "cache"),
     )

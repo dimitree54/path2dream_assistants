@@ -39,8 +39,8 @@ def test_public_service_import_and_init_signature_defaults() -> None:
         "config_dir",
         "cache_dir",
     ]
-    assert signature.parameters["config_volume"].default == "notes_assistant_api_google_drive_config"
-    assert signature.parameters["cache_volume"].default == "notes_assistant_api_google_drive_cache"
+    assert signature.parameters["config_volume"].default is inspect.Parameter.empty
+    assert signature.parameters["cache_volume"].default is inspect.Parameter.empty
     assert signature.parameters["config_dir"].default == PurePosixPath(
         "/tmp/google-drive-persistence/rclone-config"
     )
@@ -51,7 +51,7 @@ def test_public_service_import_and_init_signature_defaults() -> None:
 
 def test_default_plugin_adds_only_rclone_env_and_named_volumes() -> None:
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[persistence_service_class()()]
+        plugins=[persistence_service_class()(config_volume="test_gd_config", cache_volume="test_gd_cache")]
     )._prepare_specs()
 
     assert container_spec.env == {
@@ -59,28 +59,28 @@ def test_default_plugin_adds_only_rclone_env_and_named_volumes() -> None:
         "RCLONE_CACHE_DIR": "/tmp/google-drive-persistence/rclone-cache",
     }
     assert set(container_spec.volumes) == {
-        "notes_assistant_api_google_drive_config",
-        "notes_assistant_api_google_drive_cache",
+        "test_gd_config",
+        "test_gd_cache",
     }
-    assert container_spec.volumes["notes_assistant_api_google_drive_config"].source == (
-        "notes_assistant_api_google_drive_config"
+    assert container_spec.volumes["test_gd_config"].source == (
+        "test_gd_config"
     )
-    assert container_spec.volumes["notes_assistant_api_google_drive_config"].target == PurePosixPath(
+    assert container_spec.volumes["test_gd_config"].target == PurePosixPath(
         "/tmp/google-drive-persistence/rclone-config"
     )
-    assert container_spec.volumes["notes_assistant_api_google_drive_config"].type == "volume"
-    assert container_spec.volumes["notes_assistant_api_google_drive_cache"].source == (
-        "notes_assistant_api_google_drive_cache"
+    assert container_spec.volumes["test_gd_config"].type == "volume"
+    assert container_spec.volumes["test_gd_cache"].source == (
+        "test_gd_cache"
     )
-    assert container_spec.volumes["notes_assistant_api_google_drive_cache"].target == PurePosixPath(
+    assert container_spec.volumes["test_gd_cache"].target == PurePosixPath(
         "/tmp/google-drive-persistence/rclone-cache"
     )
-    assert container_spec.volumes["notes_assistant_api_google_drive_cache"].type == "volume"
+    assert container_spec.volumes["test_gd_cache"].type == "volume"
 
 
 def test_plugin_does_not_claim_unrelated_persistence_or_runtime_responsibilities() -> None:
     image_spec, container_spec = ContainerBuilderService(
-        plugins=[persistence_service_class()()]
+        plugins=[persistence_service_class()(config_volume="test_gd_config", cache_volume="test_gd_cache")]
     )._prepare_specs()
 
     assert image_spec.run_commands == ["mkdir -p /workspace"]
@@ -103,7 +103,7 @@ def test_plugin_does_not_claim_unrelated_persistence_or_runtime_responsibilities
         container=recording_container,
         state=container_spec.state,
     )
-    persistence_service_class()().post_start(runtime)
+    persistence_service_class()(config_volume="test_gd_config", cache_volume="test_gd_cache").post_start(runtime)
     assert recording_container.commands
     assert "rclone-config" in recording_container.commands[0][2]
     assert "rclone-cache" in recording_container.commands[0][2]
@@ -111,11 +111,11 @@ def test_plugin_does_not_claim_unrelated_persistence_or_runtime_responsibilities
 
 def test_post_start_fails_when_persisted_state_dirs_are_unhealthy() -> None:
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[persistence_service_class()()]
+        plugins=[persistence_service_class()(config_volume="test_gd_config", cache_volume="test_gd_cache")]
     )._prepare_specs()
 
     with pytest.raises(RuntimeError, match="Google Drive persistence health check failed"):
-        persistence_service_class()().post_start(
+        persistence_service_class()(config_volume="test_gd_config", cache_volume="test_gd_cache").post_start(
             ContainerRuntimeContext(
                 docker_client=object(),
                 container=RecordingContainer(exit_code=1, output="read only"),

@@ -57,13 +57,18 @@ def create_builder() -> ContainerBuilderService:
     return ContainerBuilderService(
         plugins=[
             OpenCodePersistencePluginService(
+                config_volume="notes_assistant_api_opencode_config",
+                data_volume="notes_assistant_api_opencode_data",
                 persist_auth=True,
                 persist_chat_history=True,
                 persist_opencode_artifacts=False,
                 persist_skills=False,
                 persist_agents=False,
             ),
-            GoogleDrivePersistencePluginService(),
+            GoogleDrivePersistencePluginService(
+                config_volume="notes_assistant_api_google_drive_config",
+                cache_volume="notes_assistant_api_google_drive_cache",
+            ),
             GoogleDriveMountPluginService(
                 host_port=google_drive_auth_port,
                 drive_folder_name="notes",

@@ -64,7 +64,7 @@ from assistant_api.container_builder.container_plugin.outbox_download_plugin imp
 
 plugins = [
     LocalDirMountPluginService(Path("/srv/my-telegram-bot/assistant-workspace")),
-    OpenCodePersistencePluginService(),
+    OpenCodePersistencePluginService(config_volume="my_app_opencode_config", data_volume="my_app_opencode_data"),
     OpenCodeServerPluginService(host_port=4096),
     InboxUploadPluginService(host_port=8090),
     OutboxDownloadPluginService(host_port=8091),
@@ -140,7 +140,10 @@ from assistant_api.container_builder.container_plugin.google_drive_persistence_p
     GoogleDrivePersistencePluginService,
 )
 
-plugin = GoogleDrivePersistencePluginService()
+plugin = GoogleDrivePersistencePluginService(
+    config_volume="my_app_google_drive_config",
+    cache_volume="my_app_google_drive_cache",
+)
 ```
 
 ### `OpenCodeServerPluginService`
@@ -176,7 +179,10 @@ from assistant_api.container_builder.container_plugin.opencode_persistence_plugi
     OpenCodePersistencePluginService,
 )
 
-plugin = OpenCodePersistencePluginService()
+plugin = OpenCodePersistencePluginService(
+    config_volume="my_app_opencode_config",
+    data_volume="my_app_opencode_data",
+)
 ```
 
 You can disable individual persistence categories through constructor flags such as `persist_auth=False`, `persist_chat_history=False`, `persist_skills=False`, or `persist_agents=False`.

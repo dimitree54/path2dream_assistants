@@ -11,8 +11,8 @@ class GoogleDrivePersistencePluginService:
 
     def __init__(
         self,
-        config_volume: str = "notes_assistant_api_google_drive_config",
-        cache_volume: str = "notes_assistant_api_google_drive_cache",
+        config_volume: str,
+        cache_volume: str,
         config_dir: PurePosixPath = PurePosixPath("/tmp/google-drive-persistence/rclone-config"),
         cache_dir: PurePosixPath = PurePosixPath("/tmp/google-drive-persistence/rclone-cache"),
     ) -> None:

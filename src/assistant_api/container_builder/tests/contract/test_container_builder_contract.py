@@ -161,7 +161,7 @@ def test_full_plugin_composition_uses_public_services(tmp_path: Path) -> None:
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[
             LocalDirMountPluginService(tmp_path),
-            OpenCodePersistencePluginService(),
+            OpenCodePersistencePluginService(config_volume="test_oc_config", data_volume="test_oc_data"),
             OpenCodeWebServerPluginService(host_port=4097),
         ]
     )._prepare_specs()

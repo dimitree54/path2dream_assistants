@@ -13,7 +13,7 @@ from assistant_api.models import ContainerRuntimeContext
 
 def test_opencode_persistence_plugin_adds_only_env_and_named_volumes() -> None:
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[OpenCodePersistencePluginService()]
+        plugins=[OpenCodePersistencePluginService(config_volume="test_oc_config", data_volume="test_oc_data")]
     )._prepare_specs()
 
     assert container_spec.env == {
@@ -21,10 +21,10 @@ def test_opencode_persistence_plugin_adds_only_env_and_named_volumes() -> None:
         "XDG_CONFIG_HOME": "/root/.config",
         "XDG_DATA_HOME": "/root/.local/share",
     }
-    assert container_spec.volumes["notes_assistant_api_opencode_config"].target == PurePosixPath(
+    assert container_spec.volumes["test_oc_config"].target == PurePosixPath(
         "/root/.config/opencode"
     )
-    assert container_spec.volumes["notes_assistant_api_opencode_data"].target == PurePosixPath(
+    assert container_spec.volumes["test_oc_data"].target == PurePosixPath(
         "/root/.local/share/opencode"
     )
     assert container_spec.command is None
@@ -35,6 +35,8 @@ def test_opencode_persistence_can_persist_only_auth_and_history() -> None:
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[
             OpenCodePersistencePluginService(
+                config_volume="test_oc_config",
+                data_volume="test_oc_data",
                 persist_auth=True,
                 persist_chat_history=True,
                 persist_opencode_artifacts=False,
@@ -51,14 +53,14 @@ def test_opencode_persistence_can_persist_only_auth_and_history() -> None:
         "OPENCODE_DB": "/tmp/notes-assistant/opencode-persistence/history/opencode.db",
     }
     assert set(container_spec.volumes) == {
-        "notes_assistant_api_opencode_data_auth",
-        "notes_assistant_api_opencode_data_history",
+        "test_oc_data_auth",
+        "test_oc_data_history",
     }
     assert container_spec.volumes[
-        "notes_assistant_api_opencode_data_auth"
+        "test_oc_data_auth"
     ].target == PurePosixPath("/tmp/notes-assistant/opencode-persistence/auth")
     assert container_spec.volumes[
-        "notes_assistant_api_opencode_data_history"
+        "test_oc_data_history"
     ].target == PurePosixPath("/tmp/notes-assistant/opencode-persistence/history")
     assert len(container_spec.startup_tasks) == 1
     setup_command = container_spec.startup_tasks[0].command[2]
@@ -70,7 +72,7 @@ def test_opencode_persistence_can_persist_only_auth_and_history() -> None:
 
 
 def test_opencode_persistence_post_start_checks_writable_state_dirs() -> None:
-    plugin = OpenCodePersistencePluginService()
+    plugin = OpenCodePersistencePluginService(config_volume="test_oc_config", data_volume="test_oc_data")
     _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
     container = _RecordingContainer(exit_code=0)
 
@@ -89,6 +91,8 @@ def test_opencode_persistence_post_start_checks_writable_state_dirs() -> None:
 
 def test_opencode_persistence_post_start_checks_enabled_granular_dirs() -> None:
     plugin = OpenCodePersistencePluginService(
+        config_volume="test_oc_config",
+        data_volume="test_oc_data",
         persist_opencode_artifacts=False,
         persist_skills=False,
         persist_agents=False,
@@ -112,7 +116,7 @@ def test_opencode_persistence_post_start_checks_enabled_granular_dirs() -> None:
 
 
 def test_opencode_persistence_post_start_fails_when_state_dirs_are_unhealthy() -> None:
-    plugin = OpenCodePersistencePluginService()
+    plugin = OpenCodePersistencePluginService(config_volume="test_oc_config", data_volume="test_oc_data")
     _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
 
     with pytest.raises(RuntimeError, match="OpenCode persistence health check failed"):

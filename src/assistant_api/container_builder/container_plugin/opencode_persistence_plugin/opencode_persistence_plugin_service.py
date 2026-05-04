@@ -46,8 +46,8 @@ class OpenCodePersistencePluginService:
 
     def __init__(
         self,
-        config_volume: str = "notes_assistant_api_opencode_config",
-        data_volume: str = "notes_assistant_api_opencode_data",
+        config_volume: str,
+        data_volume: str,
         home: PurePosixPath = PurePosixPath("/root"),
         *,
         persist_auth: bool = True,

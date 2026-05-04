@@ -38,7 +38,10 @@ OpenCode chat/session history is stored under `~/.local/share/opencode` inside t
 ```python
 from assistant_api.container_builder.container_plugin.opencode_persistence_plugin import OpenCodePersistencePluginService
 
-plugin = OpenCodePersistencePluginService()
+plugin = OpenCodePersistencePluginService(
+    config_volume="my_instance_opencode_config",
+    data_volume="my_instance_opencode_data",
+)
 ```
 
 ## Init time
@@ -48,8 +51,8 @@ from pathlib import PurePosixPath
 class OpenCodePersistencePluginService:
     def __init__(
         self,
-        config_volume: str = "notes_assistant_api_opencode_config",
-        data_volume: str = "notes_assistant_api_opencode_data",
+        config_volume: str,
+        data_volume: str,
         home: PurePosixPath = PurePosixPath("/root"),
         *,
         persist_auth: bool = True,
@@ -61,7 +64,7 @@ class OpenCodePersistencePluginService:
         pass
 ```
 
-Init-time `persist_*` flags define which OpenCode state categories are persisted. Defaults persist every supported category, preserving the previous all-state persistence behavior.
+Volume name parameters (`config_volume`, `data_volume`) are required and have no defaults. Callers must pass instance-specific names to prevent credential leakage when multiple instances share the same Docker host. Init-time `persist_*` flags define which OpenCode state categories are persisted. Defaults persist every supported category, preserving the previous all-state persistence behavior.
 
 The categories are:
 - `persist_auth`: OpenCode provider auth state, including `~/.local/share/opencode/auth.json`.

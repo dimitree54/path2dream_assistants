@@ -27,7 +27,7 @@ def main() -> None:
         if args.mount_dir is not None:
             plugins.append(LocalDirMountPluginService(args.mount_dir))
         if args.persist_opencode:
-            plugins.append(OpenCodePersistencePluginService())
+            plugins.append(OpenCodePersistencePluginService(config_volume="notes_assistant_api_opencode_config", data_volume="notes_assistant_api_opencode_data"))
         if args.opencode_web:
             plugins.append(
                 OpenCodeWebServerPluginService(host_port=args.port, container_port=args.container_port)

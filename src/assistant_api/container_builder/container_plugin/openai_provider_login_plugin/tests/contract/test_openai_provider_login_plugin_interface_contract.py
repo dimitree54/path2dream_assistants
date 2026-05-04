@@ -327,7 +327,7 @@ def test_prepare_specs_compose_opencode_server_persistence_and_openai_login(
 ) -> None:
     _image_spec, container_spec = ContainerBuilderService(
         plugins=[
-            OpenCodePersistencePluginService(),
+            OpenCodePersistencePluginService(config_volume="test_oc_config", data_volume="test_oc_data"),
             OpenCodeServerPluginService(
                 host_port=openai_provider_env.opencode_api_port,
                 container_port=openai_provider_env.opencode_api_port,

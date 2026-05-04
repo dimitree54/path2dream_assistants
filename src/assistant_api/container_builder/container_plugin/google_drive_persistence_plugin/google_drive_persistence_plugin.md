@@ -35,7 +35,10 @@ from assistant_api.container_builder.container_plugin.google_drive_persistence_p
     GoogleDrivePersistencePluginService,
 )
 
-plugin = GoogleDrivePersistencePluginService()
+plugin = GoogleDrivePersistencePluginService(
+    config_volume="my_instance_google_drive_config",
+    cache_volume="my_instance_google_drive_cache",
+)
 ```
 
 ## Init time
@@ -43,13 +46,15 @@ plugin = GoogleDrivePersistencePluginService()
 class GoogleDrivePersistencePluginService:
     def __init__(
         self,
-        config_volume: str = "notes_assistant_api_google_drive_config",
-        cache_volume: str = "notes_assistant_api_google_drive_cache",
+        config_volume: str,
+        cache_volume: str,
         config_dir: PurePosixPath = PurePosixPath("/tmp/google-drive-persistence/rclone-config"),
         cache_dir: PurePosixPath = PurePosixPath("/tmp/google-drive-persistence/rclone-cache"),
     ) -> None:
         pass
 ```
+
+Volume name parameters (`config_volume`, `cache_volume`) are required and have no defaults. Callers must pass instance-specific names to prevent credential leakage when multiple instances share the same Docker host.
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].

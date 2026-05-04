@@ -281,7 +281,7 @@ def _ensure_openai_login(status: dict[str, object]) -> None:
 
 def _opencode_server_stack_plugins() -> list[object]:
     return [
-        OpenCodePersistencePluginService(),
+        OpenCodePersistencePluginService(config_volume="test_oc_config", data_volume="test_oc_data"),
         OpenCodeServerPluginService(
             host_port=opencode_api_port(),
             container_port=opencode_api_port(),
