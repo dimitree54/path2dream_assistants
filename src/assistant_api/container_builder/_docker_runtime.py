@@ -55,6 +55,8 @@ def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
         devices=container_spec.devices,
         cap_add=container_spec.cap_add,
         security_opt=container_spec.security_opt,
+        mem_limit=container_spec.mem_limit,
+        restart_policy={"Name": container_spec.restart_policy} if container_spec.restart_policy else None,
         init=True,
     )
 

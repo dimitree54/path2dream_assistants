@@ -21,6 +21,8 @@ class ContainerSpec:
     devices: list[str] = field(default_factory=list)
     cap_add: list[str] = field(default_factory=list)
     security_opt: list[str] = field(default_factory=list)
+    mem_limit: str | None = None
+    restart_policy: str | None = None
     startup_tasks: list[ContainerStartupTask] = field(default_factory=list)
     managed_processes: list[ContainerManagedProcess] = field(default_factory=list)
     state: dict[str, object] = field(default_factory=dict)
