@@ -30,6 +30,7 @@ def test_configure_image_declares_image_processing_dependencies() -> None:
         "jpegoptim",
         "optipng",
         "pngquant",
+        "file",
         "python3",
         "py3-pip",
     ]
@@ -70,6 +71,7 @@ def test_post_start_checks_required_cli_tools_and_python_modules() -> None:
         "jpegoptim",
         "optipng",
         "pngquant",
+        "file",
     ]:
         assert f"command -v {command}" in command_text
     assert "import PIL" in command_text

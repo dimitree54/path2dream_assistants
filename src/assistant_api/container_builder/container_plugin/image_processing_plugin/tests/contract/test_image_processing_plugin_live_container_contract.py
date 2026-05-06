@@ -45,6 +45,8 @@ def _media_probe_script() -> str:
             "cd \"$work_dir\"",
             "magick -size 80x60 gradient:navy-cyan source.png",
             "test \"$(identify -format '%wx%h' source.png)\" = '80x60'",
+            "file source.png | grep -q 'PNG image data'",
+            "file source.png | grep -q '80 x 60'",
             "magick source.png -resize 40x30 resized.jpg",
             "test \"$(identify -format '%wx%h' resized.jpg)\" = '40x30'",
             "jpegoptim --quiet resized.jpg",

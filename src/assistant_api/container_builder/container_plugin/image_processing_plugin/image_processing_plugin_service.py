@@ -11,6 +11,7 @@ SYSTEM_PACKAGES = [
     "jpegoptim",
     "optipng",
     "pngquant",
+    "file",
     "python3",
     "py3-pip",
 ]
@@ -27,6 +28,7 @@ CLI_COMMANDS = [
     "jpegoptim",
     "optipng",
     "pngquant",
+    "file",
 ]
 
 

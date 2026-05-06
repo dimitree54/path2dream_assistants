@@ -17,6 +17,7 @@ tags:
 - устанавливает WebP CLI utilities;
 - устанавливает HEIC/HEIF CLI utilities для фото с iPhone;
 - устанавливает JPEG и PNG optimizers;
+- устанавливает `file` для определения типа файла по содержимому;
 - устанавливает Python packages `pillow` и `pillow-heif` в system Python;
 - проверяет после запуска container, что заявленные CLI tools и Python modules доступны;
 - не запускает managed processes;
@@ -58,6 +59,7 @@ System package requirements:
 - `jpegoptim` — provides additional JPEG optimization;
 - `optipng` — provides PNG optimization;
 - `pngquant` — provides lossy PNG optimization;
+- `file` — provides file type detection by content, not just extension;
 - `python3` — provides system Python runtime;
 - `py3-pip` — provides system pip installation support.
 
@@ -80,7 +82,8 @@ Required CLI commands:
 - `heif-info`;
 - `jpegoptim`;
 - `optipng`;
-- `pngquant`.
+- `pngquant`;
+- `file`.
 
 Required Python modules:
 - `PIL`;
