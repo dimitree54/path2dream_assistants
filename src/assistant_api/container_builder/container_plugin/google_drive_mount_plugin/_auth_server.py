@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import argparse
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -91,6 +92,7 @@ class GoogleDriveMountAuthServer:
         self._oauth_state: str | None = None
         self._token: dict[str, Any] | None = None
         self.remote_folder_id: str | None = None
+        self._state_lock = threading.RLock()
 
     def serve_forever(self, bind_host: str) -> None:
         self._initialize_mount_state()
@@ -198,18 +200,24 @@ class GoogleDriveMountAuthServer:
         return self._login_page_response(mark_authenticating=False)
 
     def _status(self) -> tuple[int, str, str]:
-        return (
-            200,
-            "application/json",
-            json.dumps(
-                {
-                    "authValid": self._auth_valid,
-                    "mounted": self._mounted,
-                    "state": self._state,
-                    "message": self._message,
-                }
-            ),
-        )
+        with self._state_lock:
+            if self._state == "mounted":
+                try:
+                    self._verify_status_mount_health()
+                except GoogleDriveMountAuthError as error:
+                    self._set_error(str(error))
+            return (
+                200,
+                "application/json",
+                json.dumps(
+                    {
+                        "authValid": self._auth_valid,
+                        "mounted": self._mounted,
+                        "state": self._state,
+                        "message": self._message,
+                    }
+                ),
+            )
 
     def _import_local_folder(self, content_type: str, body: bytes) -> tuple[int, str, str]:
         if not self.enable_local_folder_import:
@@ -403,6 +411,15 @@ class GoogleDriveMountAuthServer:
     def _verify_mountpoint(self) -> None:
         self._exec_checked(["mountpoint", "-q", str(self.container_path)], "mountpoint verification failed")
 
+    def _verify_mounted_path_readable(self) -> None:
+        target = Path(self.container_path)
+        try:
+            list(target.iterdir())
+        except OSError as error:
+            raise GoogleDriveMountAuthError(
+                f"Google Drive mount filesystem read failed: {error}"
+            ) from error
+
     def _verify_remote_readable(self) -> None:
         try:
             self._exec_checked(
@@ -422,6 +439,11 @@ class GoogleDriveMountAuthServer:
         self._verify_remote_readable()
         if self.mode != "ro":
             self._verify_remote_write_through_mount()
+
+    def _verify_status_mount_health(self) -> None:
+        self._verify_mountpoint()
+        self._verify_mounted_path_readable()
+        self._verify_remote_readable()
 
     def _verify_remote_write_through_mount(self) -> None:
         probe_name = f".notes-assistant-gdrive-upload-health-{os.getpid()}-{secrets.token_hex(8)}"
@@ -541,10 +563,11 @@ class GoogleDriveMountAuthServer:
         return f"http://127.0.0.1:{self.host_port}/oauth/callback"
 
     def _set_error(self, message: str) -> None:
-        self._state = "error"
-        self._message = message or "Google Drive mount failed."
-        self._auth_valid = False
-        self._mounted = False
+        with self._state_lock:
+            self._state = "error"
+            self._message = message or "Google Drive mount failed."
+            self._auth_valid = False
+            self._mounted = False
 
 
 def _credentials_from_json(raw: str) -> OAuthCredentials:

@@ -248,3 +248,41 @@ def test_existing_mount_state_reports_error_when_remote_probe_fails(
     assert_error_status(host_port)
     login = read_url(service_url(host_port, "/login"))
     assert "Google Drive is mounted successfully" not in login.text
+
+
+def test_status_detects_mount_degradation_after_successful_mount(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_port = auth_port()
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath(tmp_path / "project"),
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    complete_oauth_flow(host_port)
+
+    status = read_url(service_url(host_port, "/status"))
+    assert status.status == 200
+    payload = status.json()
+    assert payload["state"] == "mounted"
+    assert payload["mounted"] is True
+    assert payload["authValid"] is True
+
+    monkeypatch.setenv("FAKE_RCLONE_FAIL_LSF", "1")
+
+    status = read_url(service_url(host_port, "/status"))
+    assert status.status == 200
+    payload = status.json()
+    assert payload["state"] == "error"
+    assert payload["mounted"] is False
+    assert payload["authValid"] is False
+    assert payload["message"]
