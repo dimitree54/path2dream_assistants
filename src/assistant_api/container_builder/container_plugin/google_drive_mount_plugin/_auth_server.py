@@ -32,6 +32,7 @@ RCLONE_DRIVE_FILE_SCOPE = "drive.file"
 RCLONE_POLL_INTERVAL = "10m"
 RCLONE_VFS_CACHE_MODE = "writes"
 RCLONE_VFS_WRITE_BACK = "5s"
+RCLONE_UNMOUNT_TIMEOUT_SECONDS = 10
 REMOTE_WRITE_PROBE_TIMEOUT_SECONDS = 20
 
 GoogleDriveMountState = Literal["unauthenticated", "authenticating", "authenticated", "mounting", "mounted", "error"]
@@ -189,7 +190,11 @@ class GoogleDriveMountAuthServer:
         )
 
     def _logout(self) -> tuple[int, str, str]:
-        subprocess.run(["rclone", "unmount", str(self.container_path)], check=False)
+        try:
+            self._unmount_existing_mountpoint()
+        except GoogleDriveMountAuthError as error:
+            self._set_error(str(error))
+            return 500, "text/plain; charset=utf-8", self._message
         subprocess.run(["rclone", "config", "delete", self.remote_name], check=False)
         self._token = None
         self._auth_valid = False
@@ -376,6 +381,7 @@ class GoogleDriveMountAuthServer:
             ["/bin/sh", "-lc", f"mkdir -p {shlex.quote(str(self.container_path))}"],
             "mount target creation failed",
         )
+        self._unmount_existing_mountpoint()
         self._verify_mount_target_empty()
         self._exec_checked(
             [
@@ -407,6 +413,34 @@ class GoogleDriveMountAuthServer:
         raise GoogleDriveMountAuthError(
             f"Google Drive mount target must be empty before mount: {self.container_path}"
         )
+
+    def _is_mountpoint(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["mountpoint", "-q", str(self.container_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            raise GoogleDriveMountAuthError(f"mountpoint check failed: {error}") from error
+        return result.returncode == 0
+
+    def _unmount_existing_mountpoint(self) -> None:
+        if not self._is_mountpoint():
+            return
+        self._exec_checked(
+            ["rclone", "unmount", str(self.container_path)],
+            "existing Google Drive mount unmount failed",
+        )
+        deadline = time.monotonic() + RCLONE_UNMOUNT_TIMEOUT_SECONDS
+        while self._is_mountpoint():
+            if time.monotonic() >= deadline:
+                raise GoogleDriveMountAuthError(
+                    "Google Drive mount target is still mounted after unmount: "
+                    f"{self.container_path}"
+                )
+            time.sleep(0.2)
 
     def _verify_mountpoint(self) -> None:
         self._exec_checked(["mountpoint", "-q", str(self.container_path)], "mountpoint verification failed")

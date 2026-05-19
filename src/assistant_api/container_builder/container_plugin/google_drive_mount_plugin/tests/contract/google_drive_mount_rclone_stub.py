@@ -101,6 +101,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import sys
 import time
 
@@ -153,8 +154,21 @@ if args[0] == "deletefile":
     if not config_marker.exists():
         raise SystemExit(52)
     raise SystemExit(0)
-if args[0] in {"unmount", "cleanup"}:
+if args[0] == "unmount":
+    if os.environ.get("FAKE_RCLONE_FAIL_UNMOUNT") == "1":
+        print("unmount failed", file=sys.stderr)
+        raise SystemExit(57)
+    if os.environ.get("FAKE_RCLONE_CLEAR_MOUNT_TARGET_ON_UNMOUNT") == "1":
+        target = pathlib.Path(args[1])
+        if target.exists():
+            for child in target.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
     mount_marker.unlink(missing_ok=True)
+    raise SystemExit(0)
+if args[0] == "cleanup":
     raise SystemExit(0)
 raise SystemExit(0)
 """,

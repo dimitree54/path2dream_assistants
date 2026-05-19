@@ -184,7 +184,7 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - `POST /import/local-folder` must not overwrite existing files and must not auto-rename conflicting files.
 - `POST /import/local-folder` must reject path traversal, absolute paths, empty relative paths, and unsafe submitted relative paths.
 - `POST /import/local-folder` must not import arbitrary files or folders from Google Drive; v1 supports only local folder import from the user's browser.
-- `/logout` must stop the active Google Drive mount, remove stored Google Drive auth and rclone config for this container state, return the service to unauthenticated state, and render the production-ready Google Drive login page instead of plain text.
+- `/logout` must stop the active Google Drive mount with verified unmount, remove stored Google Drive auth and rclone config for this container state, return the service to unauthenticated state, and render the production-ready Google Drive login page instead of plain text.
 - `/status` must return JSON with at least `authValid`, `mounted`, `state`, and `message`.
 - `/status.state` must be one of `unauthenticated`, `authenticating`, `authenticated`, `mounting`, `mounted`, or `error`.
 - The service must create rclone config from Google OAuth credentials before mounting.
@@ -192,8 +192,10 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - Persisted rclone configs created by older versions without token `expiry` must be normalized before restore attempts.
 - If a persisted token has a future `expiry` but Google rejects the access token as invalid, restore must force a refresh using the persisted refresh token and retry the read probe once.
 - Google Drive must be mounted with `rclone mount`.
-- The Google Drive mount target must be absent or empty before `rclone mount` starts.
-- The service must fail fast with a clear error if the mount target is non-empty before mount.
+- If the Google Drive mount target is already an active mountpoint during restore, reauth, or remount, the service must treat visible files under that mountpoint as existing Google Drive contents, not as unsafe local target contents. It must unmount the active mountpoint, wait until it is no longer a mountpoint, then continue with the normal mount flow.
+- After any active mountpoint is unmounted, the underlying Google Drive mount target must be absent or empty before `rclone mount` starts.
+- The service must fail fast with a clear error if the non-mounted underlying mount target is non-empty before mount.
+- The service must fail fast with a clear error if an existing active mountpoint cannot be unmounted before remount.
 - The service must not use `rclone mount --allow-non-empty`.
 - `rclone mount` must poll Google Drive-side changes at least once per 10 minutes.
 - `rclone mount` must use VFS write cache mode `writes`, so tools can use filesystem operations such as rewriting existing files in-place, seek/truncate, random writes, and opening files for read/write.

@@ -82,6 +82,7 @@ doppler run -p notes_assistant -c dev -- uv run <your-command>
   - Recommended file size is below 200 lines. More than 400 lines is forbidden and should be decomposed.
   - Each significant class should be a separate files
   - Tests should be logically grouped into separate files
+- If the user explicitly asks you to commit, push, or publish a release, treat that as authorization to do so for this repo.
 
 # Concurrent modifications
 If you notice that some files are unexpectedly modified (not by you) - do not rever these changes,

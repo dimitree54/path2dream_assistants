@@ -15,6 +15,7 @@ from google_drive_mount_contract_helpers import (
     read_url,
     service_class,
     service_url,
+    status_json,
 )
 from google_drive_mount_oauth_stub import OAuthDriveStub, google_env, oauth_drive_stub
 from google_drive_mount_rclone_stub import FakeRclone, fake_rclone, start_plugin
@@ -286,3 +287,98 @@ def test_status_detects_mount_degradation_after_successful_mount(
     assert payload["mounted"] is False
     assert payload["authValid"] is False
     assert payload["message"]
+
+
+def test_reauth_replaces_stale_active_mountpoint_before_remount(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_port = auth_port()
+    container_path = tmp_path / "project"
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath(container_path),
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    complete_oauth_flow(host_port)
+    assert status_json(host_port)["state"] == "mounted"
+    visible_drive_file = container_path / "remote-visible-note.txt"
+    visible_drive_file.write_text("visible through active FUSE mount", encoding="utf-8")
+
+    monkeypatch.setenv("FAKE_RCLONE_FAIL_LSF", "1")
+    degraded_status = status_json(host_port)
+    assert degraded_status["state"] == "error"
+    assert degraded_status["mounted"] is False
+    assert fake_rclone.mount_marker.exists()
+    assert visible_drive_file.exists()
+
+    monkeypatch.delenv("FAKE_RCLONE_FAIL_LSF")
+    monkeypatch.setenv("FAKE_RCLONE_CLEAR_MOUNT_TARGET_ON_UNMOUNT", "1")
+    callback = complete_oauth_flow(host_port)
+
+    assert callback.status in {200, 302, 303}
+    recovered_status = status_json(host_port)
+    assert recovered_status["state"] == "mounted"
+    assert recovered_status["mounted"] is True
+    assert recovered_status["authValid"] is True
+    assert not visible_drive_file.exists()
+    commands = fake_rclone.commands()
+    mount_indexes = [index for index, command in enumerate(commands) if command[:1] == ["mount"]]
+    unmount_indexes = [index for index, command in enumerate(commands) if command[:1] == ["unmount"]]
+    assert len(mount_indexes) == 2
+    assert unmount_indexes
+    assert mount_indexes[0] < unmount_indexes[-1] < mount_indexes[1]
+    assert all("--allow-non-empty" not in command for command in commands)
+
+
+def test_reauth_reports_error_when_stale_mountpoint_cannot_unmount(
+    oauth_drive_stub: OAuthDriveStub,
+    fake_rclone: FakeRclone,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_port = auth_port()
+    container_path = tmp_path / "project"
+    plugin = service_class()(
+        host_port=host_port,
+        drive_folder_name=oauth_drive_stub.state.expected_folder_name,
+        container_path=PurePosixPath(container_path),
+        oauth_authorize_url=oauth_drive_stub.authorize_url,
+        oauth_token_url=oauth_drive_stub.token_url,
+        drive_api_base_url=oauth_drive_stub.drive_api_base_url,
+    )
+    _image_spec, container_spec = ContainerBuilderService(plugins=[plugin])._prepare_specs()
+    start_plugin(plugin, container_spec.state, fake_rclone)
+
+    complete_oauth_flow(host_port)
+    assert status_json(host_port)["state"] == "mounted"
+    (container_path / "remote-visible-note.txt").write_text(
+        "visible through active FUSE mount",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("FAKE_RCLONE_FAIL_LSF", "1")
+    assert status_json(host_port)["state"] == "error"
+
+    monkeypatch.delenv("FAKE_RCLONE_FAIL_LSF")
+    monkeypatch.setenv("FAKE_RCLONE_FAIL_UNMOUNT", "1")
+    callback = complete_oauth_flow(host_port)
+
+    assert callback.status == 500
+    assert "unmount failed" in callback.text
+    failed_status = status_json(host_port)
+    assert failed_status["state"] == "error"
+    assert failed_status["mounted"] is False
+    assert "unmount failed" in failed_status["message"]
+    commands = fake_rclone.commands()
+    assert len([command for command in commands if command[:1] == ["mount"]]) == 1
+    assert any(command[:1] == ["unmount"] for command in commands)
+    assert all("--allow-non-empty" not in command for command in commands)
