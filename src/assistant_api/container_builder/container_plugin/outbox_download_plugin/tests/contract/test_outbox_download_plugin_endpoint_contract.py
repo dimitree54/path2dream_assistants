@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import shlex
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin.local_dir_mount_plugin import (
     LocalDirMountPluginService,
 )
+from assistant_api.models import RunningContainer
 from outbox_download_contract_helpers import service_class, unused_port
 
 
@@ -26,6 +27,7 @@ from outbox_download_contract_helpers import service_class, unused_port
 @dataclass(slots=True)
 class _OutboxRuntime:
     builder: ContainerBuilderService
+    running: RunningContainer
     host_port: int
     mount_dir: Path
 
@@ -46,9 +48,9 @@ def _shared_outbox_runtime(
 
 @pytest.fixture()
 def outbox_runtime(_shared_outbox_runtime: _OutboxRuntime) -> Iterator[_OutboxRuntime]:
-    _clear_directory(_shared_outbox_runtime.mount_dir / "outbox")
+    _clear_mount_directory(_shared_outbox_runtime, "outbox")
     yield _shared_outbox_runtime
-    _clear_directory(_shared_outbox_runtime.mount_dir / "outbox")
+    _clear_mount_directory(_shared_outbox_runtime, "outbox")
 
 
 def _list_url(host_port: int, path: str = "/api/outbox/list") -> str:
@@ -102,14 +104,15 @@ def _docker_build_log(error: BaseException) -> str:
     return "\n".join(lines)
 
 
-def _clear_directory(path: Path) -> None:
-    if not path.exists():
-        return
-    for child in path.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink(missing_ok=True)
+def _clear_mount_directory(runtime: _OutboxRuntime, relative_path: str) -> None:
+    container_path = Path("/workspace") / relative_path
+    runtime.running.container.exec_run(
+        [
+            "/bin/sh",
+            "-lc",
+            f"find {shlex.quote(str(container_path))} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +",
+        ]
+    )
 
 
 def _wait_for_endpoint(url: str, timeout: float = 30) -> None:
@@ -230,11 +233,16 @@ def _run_outbox_container(
         ],
         container_name=f"notes-assistant-outbox-download-test-{os.getpid()}-{host_port}",
     )
-    builder.build_and_run()
+    running = builder.build_and_run()
 
     _wait_for_endpoint(_list_url(host_port, list_endpoint_path))
 
-    return _OutboxRuntime(builder=builder, host_port=host_port, mount_dir=mount_dir)
+    return _OutboxRuntime(
+        builder=builder,
+        running=running,
+        host_port=host_port,
+        mount_dir=mount_dir,
+    )
 
 
 # ---------------------------------------------------------------------------
