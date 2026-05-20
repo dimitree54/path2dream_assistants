@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import sys
 import argparse
@@ -33,6 +34,11 @@ RCLONE_POLL_INTERVAL = "10m"
 RCLONE_VFS_CACHE_MODE = "writes"
 RCLONE_VFS_WRITE_BACK = "5s"
 RCLONE_UNMOUNT_TIMEOUT_SECONDS = 10
+FUSE_UNMOUNT_COMMANDS = (
+    ("fusermount3", "-u"),
+    ("fusermount", "-u"),
+    ("umount", ""),
+)
 REMOTE_WRITE_PROBE_TIMEOUT_SECONDS = 20
 
 GoogleDriveMountState = Literal["unauthenticated", "authenticating", "authenticated", "mounting", "mounted", "error"]
@@ -430,7 +436,7 @@ class GoogleDriveMountAuthServer:
         if not self._is_mountpoint():
             return
         self._exec_checked(
-            ["rclone", "unmount", str(self.container_path)],
+            self._unmount_command(),
             "existing Google Drive mount unmount failed",
         )
         deadline = time.monotonic() + RCLONE_UNMOUNT_TIMEOUT_SECONDS
@@ -441,6 +447,18 @@ class GoogleDriveMountAuthServer:
                     f"{self.container_path}"
                 )
             time.sleep(0.2)
+
+    def _unmount_command(self) -> list[str]:
+        for executable, option in FUSE_UNMOUNT_COMMANDS:
+            if shutil.which(executable) is None:
+                continue
+            if option:
+                return [executable, option, str(self.container_path)]
+            return [executable, str(self.container_path)]
+        raise GoogleDriveMountAuthError(
+            "No supported Google Drive mount unmount command found. "
+            "Expected fusermount3, fusermount, or umount."
+        )
 
     def _verify_mountpoint(self) -> None:
         self._exec_checked(["mountpoint", "-q", str(self.container_path)], "mountpoint verification failed")

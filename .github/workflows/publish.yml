@@ -45,10 +45,68 @@ jobs:
       - name: Run tests
         run: uv run pytest -m "not manual and not live_container"
 
+  live-container:
+    name: Live Container Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra test
+
+      - name: Verify Docker FUSE support
+        run: |
+          set -eu
+          sudo modprobe fuse || true
+          if [ ! -e /dev/fuse ]; then
+            echo "::error::/dev/fuse is not available on this runner; live container FUSE tests cannot run."
+            exit 1
+          fi
+          docker run --rm \
+            --device /dev/fuse \
+            --cap-add SYS_ADMIN \
+            --security-opt apparmor:unconfined \
+            alpine:3.23 \
+            sh -lc '
+              set -eu
+              apk add --no-cache fuse3 rclone util-linux
+              mkdir -p /tmp/rclone-source /mnt/gdrive
+              printf "%s" ok > /tmp/rclone-source/probe.txt
+              rclone mount /tmp/rclone-source /mnt/gdrive --daemon
+              for _attempt in $(seq 1 50); do
+                if mountpoint -q /mnt/gdrive; then
+                  break
+                fi
+                sleep 0.2
+              done
+              mountpoint -q /mnt/gdrive
+              test "$(cat /mnt/gdrive/probe.txt)" = ok
+              fusermount3 -u /mnt/gdrive
+            '
+
+      - name: Run live container tests
+        run: uv run pytest -m "live_container"
+
   build:
     name: Build distribution
     runs-on: ubuntu-latest
-    needs: test
+    needs:
+      - test
+      - live-container
 
     steps:
       - name: Check out repository

@@ -193,6 +193,7 @@ The variable must contain the full Google Console OAuth client JSON with a top-l
 - If a persisted token has a future `expiry` but Google rejects the access token as invalid, restore must force a refresh using the persisted refresh token and retry the read probe once.
 - Google Drive must be mounted with `rclone mount`.
 - If the Google Drive mount target is already an active mountpoint during restore, reauth, or remount, the service must treat visible files under that mountpoint as existing Google Drive contents, not as unsafe local target contents. It must unmount the active mountpoint, wait until it is no longer a mountpoint, then continue with the normal mount flow.
+- Existing FUSE mounts must be unmounted with the first available supported Unix unmount command: `fusermount3 -u`, `fusermount -u`, or `umount`. The service must not use nonexistent rclone commands such as `rclone unmount`.
 - After any active mountpoint is unmounted, the underlying Google Drive mount target must be absent or empty before `rclone mount` starts.
 - The service must fail fast with a clear error if the non-mounted underlying mount target is non-empty before mount.
 - The service must fail fast with a clear error if an existing active mountpoint cannot be unmounted before remount.

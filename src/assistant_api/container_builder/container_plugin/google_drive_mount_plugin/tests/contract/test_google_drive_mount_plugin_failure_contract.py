@@ -289,6 +289,19 @@ def test_status_detects_mount_degradation_after_successful_mount(
     assert payload["message"]
 
 
+def test_fake_rclone_rejects_unknown_commands(fake_rclone: FakeRclone) -> None:
+    result = subprocess.run(
+        ["rclone", "unmount", "/workspace"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "unknown command" in result.stderr
+    assert fake_rclone.commands() == [["unmount", "/workspace"]]
+
+
 def test_reauth_replaces_stale_active_mountpoint_before_remount(
     oauth_drive_stub: OAuthDriveStub,
     fake_rclone: FakeRclone,
@@ -321,7 +334,7 @@ def test_reauth_replaces_stale_active_mountpoint_before_remount(
     assert visible_drive_file.exists()
 
     monkeypatch.delenv("FAKE_RCLONE_FAIL_LSF")
-    monkeypatch.setenv("FAKE_RCLONE_CLEAR_MOUNT_TARGET_ON_UNMOUNT", "1")
+    monkeypatch.setenv("FAKE_CLEAR_MOUNT_TARGET_ON_UNMOUNT", "1")
     callback = complete_oauth_flow(host_port)
 
     assert callback.status in {200, 302, 303}
@@ -332,10 +345,14 @@ def test_reauth_replaces_stale_active_mountpoint_before_remount(
     assert not visible_drive_file.exists()
     commands = fake_rclone.commands()
     mount_indexes = [index for index, command in enumerate(commands) if command[:1] == ["mount"]]
-    unmount_indexes = [index for index, command in enumerate(commands) if command[:1] == ["unmount"]]
+    unmount_indexes = [
+        index for index, command in enumerate(commands)
+        if command[:2] == ["fusermount3", "-u"]
+    ]
     assert len(mount_indexes) == 2
     assert unmount_indexes
     assert mount_indexes[0] < unmount_indexes[-1] < mount_indexes[1]
+    assert all(command[:1] != ["unmount"] for command in commands)
     assert all("--allow-non-empty" not in command for command in commands)
 
 
@@ -369,7 +386,7 @@ def test_reauth_reports_error_when_stale_mountpoint_cannot_unmount(
     assert status_json(host_port)["state"] == "error"
 
     monkeypatch.delenv("FAKE_RCLONE_FAIL_LSF")
-    monkeypatch.setenv("FAKE_RCLONE_FAIL_UNMOUNT", "1")
+    monkeypatch.setenv("FAKE_FUSERMOUNT3_FAIL_UNMOUNT", "1")
     callback = complete_oauth_flow(host_port)
 
     assert callback.status == 500
@@ -380,5 +397,6 @@ def test_reauth_reports_error_when_stale_mountpoint_cannot_unmount(
     assert "unmount failed" in failed_status["message"]
     commands = fake_rclone.commands()
     assert len([command for command in commands if command[:1] == ["mount"]]) == 1
-    assert any(command[:1] == ["unmount"] for command in commands)
+    assert any(command[:2] == ["fusermount3", "-u"] for command in commands)
+    assert all(command[:1] != ["unmount"] for command in commands)
     assert all("--allow-non-empty" not in command for command in commands)

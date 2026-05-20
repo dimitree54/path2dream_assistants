@@ -40,6 +40,16 @@ service_dir
   - unit
   - contract
 
+## Container and external binary QA
+
+Any code path that calls an external binary inside the generated assistant container must have a `live_container` test covering the real binary, command name, and required flags in the generated container.
+
+Fakes must model real tool behavior conservatively. Unknown commands must fail in fakes, and fake-only commands are forbidden unless explicitly documented as test-only.
+
+Manual tests are only for human OAuth or third-party state that cannot be automated. Docker, FUSE, rclone, and generated container runtime behavior must be covered by non-manual tests and must run before release.
+
+When a release changes generated container runtime behavior, validation must include a fresh install of the published PyPI version plus at least the affected `live_container` smoke test.
+
 ## Docs-first
 
 Each module-service has a documentation file(-s) in the module root. This doc file is approved by user and can not be silently changed. Doc files may be changed only if user explicitly approved/requested it. If not sure, ask user.

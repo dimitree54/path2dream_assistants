@@ -257,14 +257,43 @@ if args[:1] == ["deletefile"]:
         print("rclone config does not exist", file=sys.stderr)
         raise SystemExit(82)
     raise SystemExit(0)
-if args[:1] in [["unmount"], ["cleanup"]]:
-    mount_marker.unlink(missing_ok=True)
+if args[:1] == ["cleanup"]:
     raise SystemExit(0)
-raise SystemExit(0)
+print(f"unknown command {args[0]!r}", file=sys.stderr)
+raise SystemExit(64)
 """,
         encoding="utf-8",
     )
     rclone_path.chmod(0o755)
+    unmount_tool_script = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import sys
+
+log_path = pathlib.Path(os.environ["FAKE_PERSISTENT_RCLONE_LOG"])
+mount_marker = pathlib.Path(os.environ["FAKE_PERSISTENT_RCLONE_MOUNT_MARKER"])
+command = pathlib.Path(sys.argv[0]).name
+args = [command, *sys.argv[1:]]
+with log_path.open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\\n")
+if command in {"fusermount3", "fusermount"}:
+    if len(sys.argv) != 3 or sys.argv[1] != "-u":
+        print(f"{command} expected '-u <target>'", file=sys.stderr)
+        raise SystemExit(65)
+else:
+    if len(sys.argv) != 2:
+        print("umount expected '<target>'", file=sys.stderr)
+        raise SystemExit(65)
+mount_marker.unlink(missing_ok=True)
+raise SystemExit(0)
+"""
+    for tool_name in ("fusermount3", "fusermount", "umount"):
+        tool_path = bin_dir / tool_name
+        tool_path.write_text(unmount_tool_script, encoding="utf-8")
+        tool_path.chmod(0o755)
     mountpoint_path = bin_dir / "mountpoint"
     mountpoint_path.write_text(
         """#!/usr/bin/env python3

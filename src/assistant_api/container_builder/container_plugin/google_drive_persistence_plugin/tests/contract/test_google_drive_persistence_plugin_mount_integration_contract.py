@@ -177,6 +177,9 @@ def test_logout_clears_only_configured_remote_from_persisted_rclone_config(
     assert "refresh-token" not in persisted_config
     assert "[other]" in persisted_config
     assert "unrelated-folder-id" in persisted_config
+    commands = fake_persistent_rclone.commands()
+    assert any(command[:2] == ["fusermount3", "-u"] for command in commands)
+    assert all(command[:1] != ["unmount"] for command in commands)
 
 
 def test_mount_plugin_fails_fast_when_persisted_rclone_config_path_cannot_be_used(

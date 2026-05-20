@@ -154,27 +154,57 @@ if args[0] == "deletefile":
     if not config_marker.exists():
         raise SystemExit(52)
     raise SystemExit(0)
-if args[0] == "unmount":
-    if os.environ.get("FAKE_RCLONE_FAIL_UNMOUNT") == "1":
-        print("unmount failed", file=sys.stderr)
-        raise SystemExit(57)
-    if os.environ.get("FAKE_RCLONE_CLEAR_MOUNT_TARGET_ON_UNMOUNT") == "1":
-        target = pathlib.Path(args[1])
-        if target.exists():
-            for child in target.iterdir():
-                if child.is_dir():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-    mount_marker.unlink(missing_ok=True)
-    raise SystemExit(0)
 if args[0] == "cleanup":
     raise SystemExit(0)
-raise SystemExit(0)
+print(f"unknown command {args[0]!r}", file=sys.stderr)
+raise SystemExit(64)
 """,
         encoding="utf-8",
     )
     rclone_path.chmod(0o755)
+    unmount_tool_script = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+log_path = pathlib.Path(os.environ["FAKE_RCLONE_LOG"])
+mount_marker = pathlib.Path(os.environ["FAKE_RCLONE_MOUNT_MARKER"])
+command = pathlib.Path(sys.argv[0]).name
+args = [command, *sys.argv[1:]]
+with log_path.open("a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\\n")
+if command in {"fusermount3", "fusermount"}:
+    if len(sys.argv) != 3 or sys.argv[1] != "-u":
+        print(f"{command} expected '-u <target>'", file=sys.stderr)
+        raise SystemExit(65)
+    target = pathlib.Path(sys.argv[2])
+else:
+    if len(sys.argv) != 2:
+        print("umount expected '<target>'", file=sys.stderr)
+        raise SystemExit(65)
+    target = pathlib.Path(sys.argv[1])
+fail_env = f"FAKE_{command.upper()}_FAIL_UNMOUNT"
+if os.environ.get(fail_env) == "1" or os.environ.get("FAKE_FUSE_UNMOUNT_FAIL") == "1":
+    print("unmount failed", file=sys.stderr)
+    raise SystemExit(57)
+if os.environ.get("FAKE_CLEAR_MOUNT_TARGET_ON_UNMOUNT") == "1":
+    if target.exists():
+        for child in target.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+mount_marker.unlink(missing_ok=True)
+raise SystemExit(0)
+"""
+    for tool_name in ("fusermount3", "fusermount", "umount"):
+        tool_path = bin_dir / tool_name
+        tool_path.write_text(unmount_tool_script, encoding="utf-8")
+        tool_path.chmod(0o755)
     mountpoint_path = bin_dir / "mountpoint"
     mountpoint_path.write_text(
         """#!/usr/bin/env python3
