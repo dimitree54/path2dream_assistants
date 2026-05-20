@@ -125,13 +125,19 @@ def _docker_build_log(error: BaseException) -> str:
 
 def _clear_mount_directory(runtime: _InboxRuntime, relative_path: str) -> None:
     container_path = Path("/workspace") / relative_path
-    runtime.running.container.exec_run(
+    result = runtime.running.container.exec_run(
         [
             "/bin/sh",
             "-lc",
-            f"find {shlex.quote(str(container_path))} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +",
+            (
+                f"rm -rf {shlex.quote(str(container_path))} && "
+                f"mkdir -p {shlex.quote(str(container_path))} && "
+                f"chmod 777 {shlex.quote(str(container_path))}"
+            ),
         ]
     )
+    output = result.output.decode("utf-8", errors="replace")
+    assert result.exit_code == 0, output
 
 
 def _wait_for_endpoint(url: str, timeout: float = 30) -> None:
@@ -178,16 +184,18 @@ def _run_inbox_container(
         container_name=f"notes-assistant-inbox-upload-test-{os.getpid()}-{host_port}",
     )
     running = builder.build_and_run()
-
-    endpoint_path = upload_endpoint_path
-    _wait_for_endpoint(_inbox_url(host_port, endpoint_path))
-
-    return _InboxRuntime(
+    runtime = _InboxRuntime(
         builder=builder,
         running=running,
         host_port=host_port,
         mount_dir=mount_dir,
     )
+    _clear_mount_directory(runtime, "inbox")
+
+    endpoint_path = upload_endpoint_path
+    _wait_for_endpoint(_inbox_url(host_port, endpoint_path))
+
+    return runtime
 
 
 # ---------------------------------------------------------------------------
