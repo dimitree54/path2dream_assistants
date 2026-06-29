@@ -9,6 +9,7 @@ from assistant_api.container_builder._docker_runtime import (
     container_command,
     docker_ports,
     docker_volumes,
+    image_exists,
     run_container,
 )
 from assistant_api.container_builder._dockerfile import render_dockerfile
@@ -166,6 +167,50 @@ def test_run_container_omits_mem_limit_and_restart_policy_when_none() -> None:
 
     assert calls[0]["mem_limit"] is None
     assert calls[0]["restart_policy"] is None
+
+
+def test_image_exists_returns_true_for_existing_docker_image() -> None:
+    calls = []
+
+    class _Images:
+        def get(self, image_tag: str) -> object:
+            calls.append(image_tag)
+            return object()
+
+    class _DockerClient:
+        images = _Images()
+
+    assert image_exists(_DockerClient(), "assistant:latest") is True
+    assert calls == ["assistant:latest"]
+
+
+def test_image_exists_returns_false_for_missing_docker_image() -> None:
+    from docker.errors import ImageNotFound
+
+    class _Images:
+        def get(self, image_tag: str) -> object:
+            raise ImageNotFound(f"missing image: {image_tag}")
+
+    class _DockerClient:
+        images = _Images()
+
+    assert image_exists(_DockerClient(), "missing:latest") is False
+
+
+def test_image_exists_propagates_unexpected_docker_errors() -> None:
+    class _Images:
+        def get(self, _image_tag: str) -> object:
+            raise RuntimeError("docker daemon unavailable")
+
+    class _DockerClient:
+        images = _Images()
+
+    try:
+        image_exists(_DockerClient(), "assistant:latest")
+    except RuntimeError as error:
+        assert str(error) == "docker daemon unavailable"
+    else:
+        raise AssertionError("unexpected Docker errors must not be hidden")
 
 
 def test_container_command_composes_raw_command_with_managed_processes() -> None:
