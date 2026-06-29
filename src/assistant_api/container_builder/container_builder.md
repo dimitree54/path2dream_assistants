@@ -63,8 +63,9 @@ class ContainerBuilderService:
         pass
 ```
 
-Используемый интерфейс:
+Используемые интерфейсы:
 - [[container_plugin/container_plugin.md|ContainerPluginService]]
+- [[running_container_command_runner.md|RunningContainerCommandRunnerService]]
 
 # Requirements
 - Minimal builder with an empty plugins list must be valid and must start a long-running inert container.
@@ -90,3 +91,4 @@ class ContainerBuilderService:
 
 ## Sub-services
 [[container_plugin/container_plugin.md|ContainerPluginService]]
+[[running_container_command_runner.md|RunningContainerCommandRunnerService]]
