@@ -70,13 +70,14 @@ def read_url(
     data: bytes | None = None,
     headers: dict[str, str] | None = None,
     allow_redirects: bool = True,
+    timeout: float = 20,
 ) -> HttpResponse:
     request = urllib.request.Request(url, data=data, headers=headers or {})
     opener = urllib.request.build_opener() if allow_redirects else urllib.request.build_opener(
         NoRedirect
     )
     try:
-        with opener.open(request, timeout=5) as response:
+        with opener.open(request, timeout=timeout) as response:
             return HttpResponse(
                 status=response.status,
                 headers=dict(response.headers),
