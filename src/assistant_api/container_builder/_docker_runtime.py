@@ -42,6 +42,16 @@ def build_image(docker_client: Any, image_spec: ImageSpec, image_tag: str) -> Bu
     return BuiltImage(tag=image_tag, image=image, image_spec=image_spec)
 
 
+def image_exists(docker_client: Any, image_tag: str) -> bool:
+    from docker.errors import ImageNotFound
+
+    try:
+        docker_client.images.get(image_tag)
+    except ImageNotFound:
+        return False
+    return True
+
+
 def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
     return docker_client.containers.run(
         container_spec.image_tag,

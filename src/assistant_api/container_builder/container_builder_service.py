@@ -5,7 +5,7 @@ import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal, cast
 
 from assistant_api.container_builder.container_plugin import ContainerPluginService
 from assistant_api.models import (
@@ -21,12 +21,14 @@ from ._errors import ConfigurationError
 from ._docker_runtime import (
     build_image,
     ensure_named_volumes,
+    image_exists,
     run_container,
     startup_task_log_path,
     startup_task_status_path,
 )
 
 
+BuildPolicy = Literal["always", "if_missing", "never"]
 DEFAULT_IMAGE_TAG = "notes-assistant-opencode:latest"
 DEFAULT_CONTAINER_NAME = "notes-assistant-opencode"
 STARTUP_TASK_TIMEOUT_SECONDS = 300
@@ -81,22 +83,27 @@ class ContainerBuilderService:
         self,
         plugins: list[ContainerPluginService],
         container_name: str = DEFAULT_CONTAINER_NAME,
+        *,
+        image_tag: str = DEFAULT_IMAGE_TAG,
+        build_policy: BuildPolicy = "always",
     ) -> None:
         self.plugins = plugins
         self.container_name = container_name
+        self.image_tag = image_tag
+        self.build_policy = _validate_build_policy(build_policy)
         self._docker_client: Any | None = None
 
     def build(self) -> None:
         lifecycle = _PluginLifecycle()
         image_spec, _container_spec = self._prepare_specs(lifecycle)
         lifecycle.validate_finished()
-        build_image(self._client(), image_spec, DEFAULT_IMAGE_TAG)
+        self._resolve_image(self._client(), image_spec)
 
     def build_and_run(self) -> RunningContainer:
         lifecycle = _PluginLifecycle()
         image_spec, container_spec = self._prepare_specs(lifecycle)
         lifecycle.validate_finished()
-        build_image(self._client(), image_spec, DEFAULT_IMAGE_TAG)
+        self._resolve_image(self._client(), image_spec)
         return self._run_started_container(container_spec, lifecycle)
 
     def _run_started_container(
@@ -142,7 +149,7 @@ class ContainerBuilderService:
         image_spec = ImageSpec(run_commands=["mkdir -p /workspace"])
         container_spec = ContainerSpec(
             name=self.container_name,
-            image_tag=DEFAULT_IMAGE_TAG,
+            image_tag=self.image_tag,
         )
 
         for index, plugin in enumerate(self.plugins):
@@ -168,6 +175,41 @@ class ContainerBuilderService:
         lifecycle.validate_finished()
 
         return image_spec, container_spec
+
+    def _resolve_image(self, docker_client: Any, image_spec: ImageSpec) -> None:
+        if self.build_policy == "always":
+            self._build_image(docker_client, image_spec)
+            return
+
+        if image_exists(docker_client, self.image_tag):
+            LOGGER.info(
+                "Docker image reused: tag=%s policy=%s",
+                self.image_tag,
+                self.build_policy,
+            )
+            return
+
+        if self.build_policy == "if_missing":
+            self._build_image(docker_client, image_spec)
+            return
+
+        LOGGER.info(
+            "Docker image rejected: tag=%s policy=%s reason=missing",
+            self.image_tag,
+            self.build_policy,
+        )
+        raise ConfigurationError(
+            "Docker image is missing for build_policy='never': "
+            f"{self.image_tag}"
+        )
+
+    def _build_image(self, docker_client: Any, image_spec: ImageSpec) -> None:
+        build_image(docker_client, image_spec, self.image_tag)
+        LOGGER.info(
+            "Docker image built: tag=%s policy=%s",
+            self.image_tag,
+            self.build_policy,
+        )
 
     def _client(self) -> Any:
         if self._docker_client is None:
@@ -349,5 +391,10 @@ def _parse_startup_status(output: str) -> dict[str, str]:
 def _format_output_tail(output: str) -> str:
     if not output:
         return ""
-    tail = output[-4000:]
-    return "\n--- output tail ---\n" + tail
+    return "\n--- output tail ---\n" + output[-4000:]
+
+
+def _validate_build_policy(build_policy: str) -> BuildPolicy:
+    if build_policy in ("always", "if_missing", "never"):
+        return cast(BuildPolicy, build_policy)
+    raise ConfigurationError("build_policy must be one of: always, if_missing, never")
