@@ -256,6 +256,18 @@ from assistant_api.container_builder.container_plugin.command_monitor_plugin imp
 plugin = CommandMonitorPluginService(log_volume="my_app_command_monitor_logs")
 ```
 
+### `VideoProcessingPluginService`
+
+Makes the container fully video-capable with image dependencies only: `ffmpeg`/`ffprobe`, the full image processing tool set (ImageMagick, WebP, HEIC/HEIF, JPEG/PNG optimizers, `pillow`/`pillow-heif`), Node.js with `npm`/`npx`, and headless Chromium with fonts for web-based renderers such as Remotion. The image bakes in `CHROMIUM_EXECUTABLE_PATH` pointing at the system Chromium, so renderers use it instead of downloading Chrome Headless Shell at render time. No ports, mounts, startup tasks, or managed processes.
+
+```python
+from assistant_api.container_builder.container_plugin.video_processing_plugin import (
+    VideoProcessingPluginService,
+)
+
+plugin = VideoProcessingPluginService()
+```
+
 ## Example: Telegram Bot Architecture
 
 A typical Telegram bot integration looks like this:
