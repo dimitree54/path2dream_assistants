@@ -34,8 +34,7 @@ ANSWER_MARKER = "OPENCODE_API_TOKEN_OK"
 def test_live_container_persists_openai_api_token_auth_and_opencode_answers(
     tmp_path: Path,
 ) -> None:
-    if not os.environ.get(TOKEN_ENV_VAR):
-        pytest.skip("OPENAI_API_KEY is required for OpenAI API-token live container test")
+    _require_openai_live_account()
 
     suffix = f"{os.getpid()}-{uuid4().hex[:8]}"
     config_volume = f"openai_api_token_config_{suffix}"
@@ -136,6 +135,13 @@ def _build_and_run_or_fail(builder: ContainerBuilderService) -> object:
             "OpenAI API-token plugin live container failed before probe; "
             f"got {type(error).__name__}: {error}\n\n{_docker_build_log(error)}"
         )
+
+
+def _require_openai_live_account() -> None:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.skip("OpenAI paid-account live probe is validated locally under Doppler")
+    if not os.environ.get(TOKEN_ENV_VAR):
+        pytest.skip("OPENAI_API_KEY is required for OpenAI API-token live container test")
 
 
 def _assert_auth_installed_with_exact_container_env_token(container: object) -> None:

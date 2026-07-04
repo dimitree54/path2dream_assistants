@@ -274,6 +274,8 @@ def _build_and_run_or_fail(builder: ContainerBuilderService) -> object:
 
 
 def _require_openai_api_key() -> str:
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.skip("OpenAI paid-account live probe is validated locally under Doppler")
     value = os.environ.get(TOKEN_ENV_VAR)
     if not value:
         pytest.skip("OPENAI_API_KEY is required for OpenAI auth rotation live tests")
