@@ -9,6 +9,7 @@ def test_publish_workflow_requires_live_container_gate_before_build() -> None:
     text = workflow.read_text(encoding="utf-8")
 
     assert re.search(r"(?m)^  live-container:\n", text)
+    assert re.search(r"(?m)^    timeout-minutes: 20$", text)
     assert 'uv run pytest -m "live_container"' in text
     assert "Verify Docker FUSE support" in text
     assert "/dev/fuse" in text
