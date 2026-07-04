@@ -244,6 +244,18 @@ from assistant_api.container_builder.container_plugin.skills_sync_plugin import 
 plugin = SkillsSyncPluginService(["yid-notes-assistant"])
 ```
 
+### `CommandMonitorPluginService`
+
+Installs an OpenCode plugin that logs every failed `bash` tool command (non-zero exit code) to `/tmp/notes-assistant/command-monitor/failed-commands.jsonl` on a named volume. Use the accumulated log to discover tools and packages missing from the container image. Compose it after `OpenCodePersistencePluginService` when persistence is used.
+
+```python
+from assistant_api.container_builder.container_plugin.command_monitor_plugin import (
+    CommandMonitorPluginService,
+)
+
+plugin = CommandMonitorPluginService(log_volume="my_app_command_monitor_logs")
+```
+
 ## Example: Telegram Bot Architecture
 
 A typical Telegram bot integration looks like this:

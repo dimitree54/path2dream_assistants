@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 
 from assistant_api.container_builder import ContainerBuilderService
+from assistant_api.container_builder.container_plugin.command_monitor_plugin import (
+    CommandMonitorPluginService,
+)
 from assistant_api.container_builder.container_plugin.google_drive_mount_plugin import (
     GoogleDriveMountPluginService,
 )
@@ -64,6 +67,9 @@ def create_builder() -> ContainerBuilderService:
                 persist_opencode_artifacts=False,
                 persist_skills=False,
                 persist_agents=False,
+            ),
+            CommandMonitorPluginService(
+                log_volume="notes_assistant_api_command_monitor_logs",
             ),
             GoogleDrivePersistencePluginService(
                 config_volume="notes_assistant_api_google_drive_config",

@@ -28,6 +28,7 @@ exclude = ["*.tests", "*.tests.*"]
 
 [tool.setuptools.package-data]
 "assistant_api.container_builder.container_plugin" = ["assets/*.css"]
+"assistant_api.container_builder.container_plugin.command_monitor_plugin" = ["*.js"]
 "assistant_api.container_builder.container_plugin.google_drive_mount_plugin" = ["assets/*.PNG"]
 "assistant_api.container_builder.container_plugin.openai_provider_login_plugin" = ["assets/*.PNG"]
 
