@@ -49,6 +49,10 @@ Supported artifact layout:
 - optional: `opencode.json`;
 - optional: `.opencode/agents/*.md`.
 
+Direct OS metadata files under `.opencode/skills` are ignored only for `.DS_Store`,
+`Thumbs.db`, and `desktop.ini`. Any other non-directory entry under
+`.opencode/skills` must fail fast.
+
 The service records the selected artifact set during init. Changing `source_path`
 after service construction is outside this contract.
 

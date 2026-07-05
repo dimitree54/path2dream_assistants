@@ -84,6 +84,34 @@ def test_configure_container_rejects_file_in_skills_dir(tmp_path: Path) -> None:
         ContainerBuilderService(plugins=[service_class()(source)])._prepare_specs()
 
 
+def test_configure_container_ignores_os_metadata_files_in_skills_dir(
+    tmp_path: Path,
+) -> None:
+    metadata_files = (".DS_Store", "Thumbs.db", "desktop.ini")
+    source = make_source(tmp_path / "source")
+    skills_dir = source / ".opencode" / "skills"
+    for file_name in metadata_files:
+        write_file(skills_dir / file_name, "metadata\n")
+    home = tmp_path / "home"
+    home.mkdir()
+
+    container_spec = prepare_container(source)
+    task = only_startup_task(container_spec)
+
+    command_text = task.command[2]
+    assert "private-skill" in command_text
+    for file_name in metadata_files:
+        assert file_name not in command_text
+
+    with simulated_source_mount(container_spec, source):
+        assert_startup_task_succeeds(task, home=home)
+
+    config_dir = opencode_config_dir(home)
+    assert (config_dir / "skills" / "private-skill" / "SKILL.md").exists()
+    for file_name in metadata_files:
+        assert not (config_dir / "skills" / file_name).exists()
+
+
 def test_configure_container_mounts_source_read_only_outside_workspace(
     tmp_path: Path,
 ) -> None:

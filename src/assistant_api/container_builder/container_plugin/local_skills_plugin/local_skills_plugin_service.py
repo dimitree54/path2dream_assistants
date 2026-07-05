@@ -17,6 +17,9 @@ from assistant_api.models import (
 
 
 LOCAL_SKILLS_MOUNT_ROOT = PurePosixPath("/tmp/notes-assistant/local-skills")
+_DIRECT_SKILLS_OS_METADATA_FILES = frozenset(
+    {".DS_Store", "Thumbs.db", "desktop.ini"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +92,8 @@ def _discover_artifacts(source_path: Path) -> _LocalArtifacts:
     skills: list[str] = []
     for entry in sorted(skills_dir.iterdir(), key=lambda path: path.name.lower()):
         if not entry.is_dir():
+            if entry.name in _DIRECT_SKILLS_OS_METADATA_FILES:
+                continue
             raise ConfigurationError(
                 f"skill entry must be a directory: {entry.relative_to(source_path)}"
             )
