@@ -146,12 +146,13 @@ def _opencode_health_command(
             "attempts=0",
             "while true; do",
             (
-                "  if wget -qO- "
+                "  health_response=$(wget -q -T 5 -O - "
                 f"http://127.0.0.1:{container_port}/global/health "
-                "| grep -q '\"healthy\"[[:space:]]*:[[:space:]]*true'; then"
+                "2>/dev/null || true)"
             ),
-            "    exit 0",
-            "  fi",
+            '  case "$health_response" in',
+            '    *\'"healthy":true\'*|*\'"healthy": true\'*) exit 0 ;;',
+            "  esac",
             "  attempts=$((attempts + 1))",
             "  if [ \"$attempts\" -ge 120 ]; then",
             "    printf '%s\\n' 'OpenCode web did not become healthy' >&2",

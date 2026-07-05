@@ -78,7 +78,12 @@ def _probe_script() -> str:
             "test -r /root/.config/opencode/opencode.json",
             "test ! -e /workspace/.opencode",
             "test ! -e /workspace/AGENTS.md",
-            "wget -qO- http://127.0.0.1:4096/global/health | grep -q '\"healthy\"[[:space:]]*:[[:space:]]*true'",
+            (
+                "health_response=$(wget -q -T 5 -O - "
+                "http://127.0.0.1:4096/global/health 2>/dev/null) "
+                "&& case \"$health_response\" in "
+                "*'\"healthy\":true'*|*'\"healthy\": true'*) true ;; *) false ;; esac"
+            ),
             "printf '%s\\n' local-skills-live-probe-ok",
         ]
     )

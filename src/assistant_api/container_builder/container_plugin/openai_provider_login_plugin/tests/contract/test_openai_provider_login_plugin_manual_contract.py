@@ -56,7 +56,7 @@ def test_manual_live_openai_provider_headless_login_round_trip() -> None:
                 "-lc",
                 (
                     f"curl -fsS http://127.0.0.1:{openai_auth_port()}/status "
-                    f"|| wget -qO- http://127.0.0.1:{openai_auth_port()}/status"
+                    f"|| wget -q -T 5 -O - http://127.0.0.1:{openai_auth_port()}/status"
                 ),
             ]
         )

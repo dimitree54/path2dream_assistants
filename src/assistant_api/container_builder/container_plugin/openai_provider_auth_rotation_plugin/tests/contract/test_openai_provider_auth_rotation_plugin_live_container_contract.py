@@ -217,8 +217,10 @@ def _assert_opencode_server_healthy(container: object) -> None:
             "/bin/sh",
             "-lc",
             (
-                "wget -qO- http://127.0.0.1:4096/global/health "
-                "| grep -q '\"healthy\"[[:space:]]*:[[:space:]]*true'"
+                "health_response=$(wget -q -T 5 -O - "
+                "http://127.0.0.1:4096/global/health 2>/dev/null) "
+                "&& case \"$health_response\" in "
+                "*'\"healthy\":true'*|*'\"healthy\": true'*) true ;; *) false ;; esac"
             ),
         ]
     )

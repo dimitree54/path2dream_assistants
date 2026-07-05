@@ -52,7 +52,7 @@ The recorded metadata must contain:
 - `working_dir` — final `ContainerSpec.working_dir`, from which OpenCode is launched;
 - `api_container_port` — container-local port passed to `opencode web --port` and used by other plugins for local OpenCode API calls.
 
-During `post_start`, the service must wait until the container-local `GET /global/health` endpoint reports healthy on `api_container_port`.
+During `post_start`, the service must wait until the container-local `GET /global/health` endpoint reports healthy on `api_container_port`. Each health request attempt must be bounded so a single stuck HTTP request cannot block startup indefinitely. The health probe must inspect a captured response body, not a long-lived `wget | grep` pipeline.
 
 The configured working directory must be mounted before OpenCode starts. If `wait_for_mount=False`, the service must fail fast when the working directory is not a mountpoint. If `wait_for_mount=True`, the service must log a warning and wait indefinitely, periodically checking until the working directory becomes a mountpoint, before starting OpenCode and before running the health probe.
 

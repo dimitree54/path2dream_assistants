@@ -94,6 +94,8 @@ def test_opencode_web_server_post_start_checks_container_health() -> None:
     assert "mountpoint -q" in container.commands[0][2]
     assert "Required mount is not ready" in container.commands[0][2]
     assert "/global/health" in container.commands[0][2]
+    assert "wget -q -T 5 -O -" in container.commands[0][2]
+    assert " | grep" not in container.commands[0][2]
 
 
 def test_opencode_web_server_wait_for_mount_post_start_uses_infinite_wait_loop() -> None:
