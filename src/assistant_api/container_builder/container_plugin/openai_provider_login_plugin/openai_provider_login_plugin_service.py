@@ -163,7 +163,7 @@ def _install_file_commands(target_path: str, content: bytes) -> list[str]:
 
 def _auth_server_command() -> str:
     return (
-        "while ! wget -qO- http://127.0.0.1:$OPENCODE_API_PORT/global/health "
+        "while ! wget -q -T 5 -O - http://127.0.0.1:$OPENCODE_API_PORT/global/health "
         ">/dev/null 2>&1; do "
         "sleep 1; "
         "done; "

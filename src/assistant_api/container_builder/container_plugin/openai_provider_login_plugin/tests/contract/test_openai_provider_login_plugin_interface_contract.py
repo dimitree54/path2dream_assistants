@@ -231,6 +231,32 @@ def test_openai_auth_runs_as_composable_managed_process(
     assert any("OPENAI_AUTH_PORT" in repr(process) for process in managed_processes)
 
 
+def test_openai_auth_waits_for_opencode_with_bounded_health_probe(
+    openai_provider_env: OpenAIProviderEnv,
+) -> None:
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port),
+            plugin,
+        ]
+    )._prepare_specs()
+
+    process = next(
+        process
+        for process in container_spec.managed_processes
+        if process.name == "openai-provider-login"
+    )
+    command_text = process.command[2]
+
+    assert (
+        "while ! wget -q -T 5 -O - "
+        "http://127.0.0.1:$OPENCODE_API_PORT/global/health"
+    ) in command_text
+    assert "exec python3 /opt/notes-assistant-api/openai_provider_auth_server.py" in command_text
+
+
 def test_post_start_does_not_start_host_side_auth_server(
     openai_provider_env: OpenAIProviderEnv,
     monkeypatch: pytest.MonkeyPatch,
