@@ -187,6 +187,8 @@ plugin = OpenCodePersistencePluginService(
 
 You can disable individual persistence categories through constructor flags such as `persist_auth=False`, `persist_chat_history=False`, `persist_skills=False`, or `persist_agents=False`.
 
+Set `chat_history_host_dir=Path("...")` to keep only OpenCode chat/session history in a caller-owned host directory instead of the history named volume.
+
 ### `OpenAIProviderLoginPluginService`
 
 Adds a browser login page and status endpoint for OpenCode's OpenAI provider auth flow. It uses the OpenCode API inside the container, so it must be composed after `OpenCodeServerPluginService` or another plugin that records OpenCode runtime metadata.

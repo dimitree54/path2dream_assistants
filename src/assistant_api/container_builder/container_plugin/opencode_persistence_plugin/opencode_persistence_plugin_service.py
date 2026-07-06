@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shlex
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.models import (
@@ -55,6 +55,7 @@ class OpenCodePersistencePluginService:
         persist_opencode_artifacts: bool = True,
         persist_skills: bool = True,
         persist_agents: bool = True,
+        chat_history_host_dir: str | Path | None = None,
     ) -> None:
         self.config_volume = config_volume
         self.data_volume = data_volume
@@ -70,6 +71,10 @@ class OpenCodePersistencePluginService:
         )
         self.persist_skills = _validate_bool("persist_skills", persist_skills)
         self.persist_agents = _validate_bool("persist_agents", persist_agents)
+        self.chat_history_host_dir = _validate_chat_history_host_dir(
+            chat_history_host_dir,
+            persist_chat_history=self.persist_chat_history,
+        )
 
     def configure_image(self, image: ImageSpec) -> None:
         return None
@@ -102,7 +107,18 @@ class OpenCodePersistencePluginService:
         if self.persist_auth:
             self._add_volume(container, self._data_volume("auth"), AUTH_PERSISTENCE_DIR)
         if self.persist_chat_history:
-            self._add_volume(container, self._data_volume("history"), HISTORY_PERSISTENCE_DIR)
+            if self.chat_history_host_dir is None:
+                self._add_volume(
+                    container,
+                    self._data_volume("history"),
+                    HISTORY_PERSISTENCE_DIR,
+                )
+            else:
+                self._add_bind_mount(
+                    container,
+                    self.chat_history_host_dir,
+                    HISTORY_PERSISTENCE_DIR,
+                )
             container.env["OPENCODE_DB"] = str(HISTORY_PERSISTENCE_DIR / "opencode.db")
         if self.persist_opencode_artifacts:
             self._add_volume(
@@ -150,6 +166,8 @@ class OpenCodePersistencePluginService:
             raise RuntimeError(f"OpenCode persistence health check failed: {result.output}")
 
     def _uses_full_directory_persistence(self) -> bool:
+        if self.chat_history_host_dir is not None:
+            return False
         return (
             self.persist_auth
             and self.persist_chat_history
@@ -196,11 +214,50 @@ class OpenCodePersistencePluginService:
             type="volume",
         )
 
+    @staticmethod
+    def _add_bind_mount(
+        container: ContainerSpec,
+        host_path: Path,
+        target: PurePosixPath,
+    ) -> None:
+        source = str(host_path)
+        container.volumes[source] = VolumeMount(
+            source=source,
+            target=target,
+            type="bind",
+        )
+
 
 def _validate_bool(name: str, value: bool) -> bool:
     if not isinstance(value, bool):
         raise ConfigurationError(f"{name} must be a boolean")
     return value
+
+
+def _validate_chat_history_host_dir(
+    value: str | Path | None,
+    *,
+    persist_chat_history: bool,
+) -> Path | None:
+    if value is None:
+        return None
+    if not persist_chat_history:
+        raise ConfigurationError(
+            "chat_history_host_dir requires persist_chat_history=True"
+        )
+    if not isinstance(value, (str, Path)):
+        raise ConfigurationError("chat_history_host_dir must be a path")
+    try:
+        path = Path(value).expanduser().resolve()
+        if not path.exists():
+            raise ConfigurationError("chat_history_host_dir must exist")
+        if not path.is_dir():
+            raise ConfigurationError("chat_history_host_dir must be a directory")
+    except ConfigurationError:
+        raise
+    except OSError as error:
+        raise ConfigurationError("chat_history_host_dir is not accessible") from error
+    return path
 
 
 def _persistence_setup_command(
