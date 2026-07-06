@@ -368,6 +368,7 @@ def test_minimal_builder_has_no_optional_container_features() -> None:
 
     assert container_spec.name == "notes-assistant-opencode"
     assert container_spec.command is None
+    assert container_spec.shm_size is None
     assert container_spec.volumes == {}
     assert container_spec.ports == {}
     assert container_spec.env == {}

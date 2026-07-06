@@ -123,6 +123,29 @@ def test_run_container_passes_mem_limit_to_docker_sdk() -> None:
     assert calls[0]["mem_limit"] == "512m"
 
 
+def test_run_container_passes_shm_size_to_docker_sdk() -> None:
+    calls = []
+
+    class _Containers:
+        def run(self, *_args: Any, **kwargs: Any) -> object:
+            calls.append(kwargs)
+            return object()
+
+    class _DockerClient:
+        containers = _Containers()
+
+    run_container(
+        _DockerClient(),
+        ContainerSpec(
+            name="container-name",
+            image_tag="image-tag",
+            shm_size="1g",
+        ),
+    )
+
+    assert calls[0]["shm_size"] == "1g"
+
+
 def test_run_container_passes_restart_policy_to_docker_sdk() -> None:
     calls = []
 
@@ -146,7 +169,7 @@ def test_run_container_passes_restart_policy_to_docker_sdk() -> None:
     assert calls[0]["restart_policy"] == {"Name": "unless-stopped"}
 
 
-def test_run_container_omits_mem_limit_and_restart_policy_when_none() -> None:
+def test_run_container_omits_optional_runtime_limits_when_none() -> None:
     calls = []
 
     class _Containers:
@@ -166,6 +189,7 @@ def test_run_container_omits_mem_limit_and_restart_policy_when_none() -> None:
     )
 
     assert calls[0]["mem_limit"] is None
+    assert calls[0]["shm_size"] is None
     assert calls[0]["restart_policy"] is None
 
 

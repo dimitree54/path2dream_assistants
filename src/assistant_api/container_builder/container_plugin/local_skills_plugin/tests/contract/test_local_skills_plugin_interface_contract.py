@@ -8,7 +8,7 @@ import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
-from assistant_api.models import VolumeMount
+from assistant_api.models import LocalSkillPostInstallCommand, VolumeMount
 from local_skills_contract_helpers import (
     RecordingContainer,
     assert_startup_task_succeeds,
@@ -29,8 +29,13 @@ def test_public_service_import_and_init_signature() -> None:
     service = service_class()
     signature = inspect.signature(service)
 
-    assert list(signature.parameters) == ["source_path"]
+    assert list(signature.parameters) == ["source_path", "post_install_commands"]
     assert signature.parameters["source_path"].default is inspect.Parameter.empty
+    assert signature.parameters["post_install_commands"].default is None
+    assert (
+        signature.parameters["post_install_commands"].kind
+        is inspect.Parameter.KEYWORD_ONLY
+    )
 
 
 def test_configure_container_rejects_missing_source_path(tmp_path: Path) -> None:
@@ -152,6 +157,108 @@ def test_configure_container_registers_startup_task_targeting_xdg_config_home(
     assert "private-skill" in command_text
     assert "private-agent.md" in command_text
     assert "/workspace" not in command_text
+
+
+def test_configure_container_registers_post_install_tasks_after_artifact_install(
+    tmp_path: Path,
+) -> None:
+    source = make_source(tmp_path / "source", skill_name="clip-editor")
+    post_install = LocalSkillPostInstallCommand(
+        name="install-remotion-renderer-deps",
+        working_dir=PurePosixPath("skills/clip-editor/scripts/remotion_artifact_renderer"),
+        command=["npm", "ci"],
+    )
+
+    container_spec = prepare_container(
+        source,
+        post_install_commands=[post_install],
+    )
+
+    assert len(container_spec.startup_tasks) == 2
+    install_task, post_install_task = container_spec.startup_tasks
+    assert install_task.name == "install-local-opencode-artifacts"
+    assert "install-remotion-renderer-deps" in post_install_task.name
+    assert post_install_task.owner_plugin_name == "local-skills"
+
+    command_text = post_install_task.command[2]
+    assert "XDG_CONFIG_HOME" in command_text
+    assert "$XDG_CONFIG_HOME/opencode" in command_text
+    assert "skills/clip-editor/scripts/remotion_artifact_renderer" in command_text
+    assert "npm ci" in command_text
+    assert str(source.resolve()) not in command_text
+
+
+def test_post_install_task_runs_inside_installed_artifact_copy(tmp_path: Path) -> None:
+    source = make_source(tmp_path / "source", skill_name="clip-editor")
+    home = tmp_path / "home"
+    home.mkdir()
+    post_install = LocalSkillPostInstallCommand(
+        name="write-prepared-marker",
+        working_dir=PurePosixPath("skills/clip-editor"),
+        command=[
+            "/bin/sh",
+            "-lc",
+            "test -r SKILL.md && printf '%s\\n' \"$PWD\" > postinstall.pwd",
+        ],
+    )
+    container_spec = prepare_container(
+        source,
+        post_install_commands=[post_install],
+    )
+    install_task, post_install_task = container_spec.startup_tasks
+
+    with simulated_source_mount(container_spec, source):
+        assert_startup_task_succeeds(install_task, home=home)
+        assert_startup_task_succeeds(post_install_task, home=home)
+
+    installed_marker = (
+        opencode_config_dir(home) / "skills" / "clip-editor" / "postinstall.pwd"
+    )
+    assert installed_marker.exists()
+    assert "skills/clip-editor" in installed_marker.read_text(encoding="utf-8")
+    assert not (source / ".opencode" / "skills" / "clip-editor" / "postinstall.pwd").exists()
+
+
+@pytest.mark.parametrize(
+    "post_install",
+    [
+        LocalSkillPostInstallCommand(
+            name="",
+            working_dir=PurePosixPath("skills/private-skill"),
+            command=["true"],
+        ),
+        LocalSkillPostInstallCommand(
+            name="absolute",
+            working_dir=PurePosixPath("/skills/private-skill"),
+            command=["true"],
+        ),
+        LocalSkillPostInstallCommand(
+            name="traversal",
+            working_dir=PurePosixPath("skills/../private-skill"),
+            command=["true"],
+        ),
+        LocalSkillPostInstallCommand(
+            name="empty-command",
+            working_dir=PurePosixPath("skills/private-skill"),
+            command=[],
+        ),
+    ],
+)
+def test_configure_container_rejects_invalid_post_install_commands(
+    tmp_path: Path,
+    post_install: LocalSkillPostInstallCommand,
+) -> None:
+    source = make_source(tmp_path / "source")
+
+    with pytest.raises(ConfigurationError):
+        ContainerBuilderService(
+            plugins=[
+                service_class()(
+                    source,
+                    post_install_commands=[post_install],
+                )
+            ]
+        )._prepare_specs()
 
 
 def test_configure_image_does_not_add_dependencies(tmp_path: Path) -> None:

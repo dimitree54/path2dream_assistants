@@ -9,7 +9,7 @@ tags:
 Его задача — сделать container полностью пригодным для работы с видео end to end: video/audio tooling, полный набор image tooling и web-based renderer support (Node.js + headless Chromium для Remotion-style renderers). Wrapper application подключает только этот один media plugin и не должен дополнительно подключать отдельный image processing plugin.
 
 # Responsibility
-Единая ответственность этого сервиса — подготовить image-level dependencies для видео-работы (включая обработку изображений и web-based rendering) без запуска runtime-процессов и без настройки container behavior.
+Единая ответственность этого сервиса — подготовить image-level dependencies и минимальные Docker runtime settings для видео-работы (включая обработку изображений и web-based rendering) без запуска runtime-процессов.
 
 То есть он:
 - устанавливает `ffmpeg` (включая `ffprobe`) для cutting, frame extraction, resize, conversion и audio work;
@@ -17,7 +17,9 @@ tags:
 - устанавливает Node.js с `npm`/`npx` для запуска web-based renderers;
 - устанавливает headless Chromium с его runtime libs и базовым набором ttf fonts (включая emoji font) для on-video text rendering;
 - задаёт documented env var `CHROMIUM_EXECUTABLE_PATH` с путём к system Chromium executable, чтобы renderers использовали system browser вместо скачивания Chrome Headless Shell at render time;
+- запрашивает увеличенный `/dev/shm` для стабильного headless Chromium rendering;
 - проверяет после запуска container, что заявленные CLI tools, Chromium executable, fonts и Python modules доступны;
+- проверяет после запуска container, что Chromium реально запускается headlessly without network access;
 - не запускает managed processes;
 - не регистрирует startup tasks;
 - не публикует ports;
@@ -79,9 +81,9 @@ Environment variable contract:
 - during `configure_image`, the service must set `ImageSpec.env["CHROMIUM_EXECUTABLE_PATH"]` to the absolute path of the system Chromium executable (`/usr/bin/chromium-browser`);
 - the variable is baked into the image, so renderers inside the container (for example Remotion via `--browser-executable="$CHROMIUM_EXECUTABLE_PATH"`) use the system browser instead of downloading Chrome Headless Shell at render time.
 
-During `configure_container`, the service must not mutate container runtime behavior.
+During `configure_container`, the service must set `ContainerSpec.shm_size` to `1g`.
 
-During `post_start`, the service must verify inside the running container that the required CLI commands, the Chromium executable, fonts, and Python modules are available.
+During `post_start`, the service must verify inside the running container that the required CLI commands, the Chromium executable, fonts, Python modules, and no-network headless Chromium execution are available.
 
 Required CLI commands:
 - `ffmpeg`;
@@ -105,6 +107,7 @@ Required CLI commands:
 Required Chromium checks:
 - executable at `$CHROMIUM_EXECUTABLE_PATH` exists and is executable;
 - `fc-list` reports at least one installed font.
+- `$CHROMIUM_EXECUTABLE_PATH --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<html>ok</html>'` must produce the expected DOM text without downloading a browser.
 
 Required Python modules:
 - `PIL`;
@@ -121,6 +124,7 @@ Required Python modules:
 - Сервис должен устанавливать базовый ttf font set и emoji font, доступные через `fontconfig`.
 - Сервис должен устанавливать `util-linux` и обеспечивать доступность command `setpriv` для Remotion/Chromium launch на Alpine.
 - Сервис должен задавать `CHROMIUM_EXECUTABLE_PATH` в `ImageSpec.env` со значением абсолютного пути system Chromium executable.
+- Сервис должен задавать `ContainerSpec.shm_size="1g"` для увеличенного `/dev/shm`.
 - Container должен позволять real web-based render (Remotion) через system Chromium по пути из `CHROMIUM_EXECUTABLE_PATH`, без скачивания Chrome Headless Shell.
 - Сервис не должен добавлять startup tasks.
 - Сервис не должен добавлять managed processes.
@@ -130,6 +134,7 @@ Required Python modules:
 - Сервис должен fail fast during `post_start` if any required CLI command is missing.
 - Сервис должен fail fast during `post_start` if the Chromium executable at `$CHROMIUM_EXECUTABLE_PATH` is missing or not executable.
 - Сервис должен fail fast during `post_start` if no fonts are visible through `fc-list`.
+- Сервис должен fail fast during `post_start` if Chromium cannot launch headlessly against a no-network data URL.
 - Сервис должен fail fast during `post_start` if `PIL` or `pillow_heif` cannot be imported by `python3`.
 - Сервис не должен включать GPU/hardware acceleration в контракт: rendering выполняется на CPU.
 - Сервис не должен выполнять video/image conversion, rendering, upload, download, or persistence behavior сам.

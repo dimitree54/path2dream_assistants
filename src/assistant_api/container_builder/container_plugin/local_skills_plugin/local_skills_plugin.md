@@ -35,9 +35,16 @@ plugin = LocalSkillsPluginService("/host/private/opencode-artifacts")
 ## Init time
 ```python
 from pathlib import Path
+from pathlib import PurePosixPath
+from assistant_api.models import LocalSkillPostInstallCommand
 
 class LocalSkillsPluginService:
-    def __init__(self, source_path: str | Path) -> None:
+    def __init__(
+        self,
+        source_path: str | Path,
+        *,
+        post_install_commands: list[LocalSkillPostInstallCommand] | None = None,
+    ) -> None:
         pass
 ```
 
@@ -56,12 +63,36 @@ Direct OS metadata files under `.opencode/skills` are ignored only for `.DS_Stor
 The service records the selected artifact set during init. Changing `source_path`
 after service construction is outside this contract.
 
+`post_install_commands` optionally declares exact commands that run after the
+artifacts are installed into `$XDG_CONFIG_HOME/opencode` and before long-running
+OpenCode processes start.
+
+```python
+LocalSkillPostInstallCommand(
+    name="install-remotion-renderer-deps",
+    working_dir=PurePosixPath("skills/clip-editor/scripts/remotion_artifact_renderer"),
+    command=["npm", "ci"],
+)
+```
+
+Each post-install command must have a non-empty name, a relative POSIX
+`working_dir` under `$XDG_CONFIG_HOME/opencode`, and a non-empty exact argv
+`command`. Absolute paths, empty path segments, `.` and `..` path segments are
+invalid. The service must not interpret command strings through a shell unless
+the caller explicitly chooses a shell as the argv executable.
+
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
-During `configure_container`, the service registers one read-only bind mount for `source_path` and one startup task in `ContainerSpec.startup_tasks`.
+During `configure_container`, the service registers one read-only bind mount for `source_path` and startup tasks in `ContainerSpec.startup_tasks`.
 
 The startup task copies supported artifacts into `$XDG_CONFIG_HOME/opencode` and must finish before long-running OpenCode processes start.
+
+Post-install startup tasks run after the artifact-copy startup task, inside the
+installed `$XDG_CONFIG_HOME/opencode/<working_dir>` directory. If any command
+fails, container startup must fail fast with the command task output. Post-install
+commands must operate on the installed config copy, not on the read-only source
+mount.
 
 During `post_start`, the service must verify inside the container that selected local artifacts are present and readable in `$XDG_CONFIG_HOME/opencode`.
 
@@ -77,6 +108,10 @@ During `post_start`, the service must verify inside the container that selected 
 - Existing target `AGENTS.md`, `opencode.json`, selected agent files, or selected skill directories must fail fast before copying.
 - The service must not merge, replace, backup, overwrite, or partially install artifacts.
 - The service must register artifact installation as a startup task, so artifacts are installed before long-running OpenCode processes start.
+- The service must register post-install commands as startup tasks after artifact installation and before long-running OpenCode processes start.
+- Post-install commands must run in `$XDG_CONFIG_HOME/opencode/<working_dir>`.
+- Post-install commands must not run against the read-only source mount.
+- Invalid post-install command name, `working_dir`, or argv must fail fast before container startup.
 - The service must fail fast if installed artifacts are missing or unreadable after the startup task has completed.
 - The source mount inside the container must be read-only and outside `/workspace`.
 

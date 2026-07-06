@@ -62,9 +62,18 @@ def make_source(
     return root
 
 
-def prepare_container(source_path: Path) -> ContainerSpec:
+def prepare_container(
+    source_path: Path,
+    *,
+    post_install_commands: list[object] | None = None,
+) -> ContainerSpec:
     _image_spec, container_spec = ContainerBuilderService(
-        plugins=[service_class()(source_path)]
+        plugins=[
+            service_class()(
+                source_path,
+                post_install_commands=post_install_commands,
+            )
+        ]
     )._prepare_specs()
     return container_spec
 

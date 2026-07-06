@@ -83,7 +83,7 @@ class ContainerBuilderService:
 - Startup tasks registered by plugins must run before managed long-running processes.
 - Managed long-running processes registered by plugins must be started by the container entrypoint.
 - A raw `ContainerSpec.command` and managed long-running processes must not conflict silently.
-- Docker runtime capabilities requested by plugins, including devices, `cap_add`, security options, `mem_limit`, and `restart_policy`, must be passed to Docker SDK when the container starts.
+- Docker runtime capabilities requested by plugins, including devices, `cap_add`, security options, `mem_limit`, `shm_size`, and `restart_policy`, must be passed to Docker SDK when the container starts.
 - Post-start hooks must run after Docker reports the container as started.
 - `build_and_run()` must validate that all plugin hooks finished successfully before returning `RunningContainer`.
 - Any plugin hook failure must fail fast with an explicit error and must prevent `build_and_run()` from returning a successful result.

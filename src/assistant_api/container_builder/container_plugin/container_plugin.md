@@ -50,7 +50,7 @@ Shared runtime-модели этого интерфейса находятся �
 Стандартные container capabilities:
 - startup task — одноразовая команда, которая должна завершиться успешно до запуска long-running processes;
 - managed process — long-running process, которым управляет container entrypoint;
-- Docker runtime capabilities — минимальные Docker options, нужные plugin для запуска container, включая devices, `cap_add`, security options, `mem_limit` и `restart_policy`.
+- Docker runtime capabilities — минимальные Docker options, нужные plugin для запуска container, включая devices, `cap_add`, security options, `mem_limit`, `shm_size` и `restart_policy`.
 
 Стандартное правило image dependencies:
 - plugin должен объявлять системные пакеты через `ImageSpec.apk_packages`;

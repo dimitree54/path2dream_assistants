@@ -12,8 +12,11 @@ from assistant_api.models import (
     ContainerSpec,
     ContainerStartupTask,
     ImageSpec,
+    LocalSkillPostInstallCommand,
     VolumeMount,
 )
+
+from ._post_install import post_install_startup_tasks, validate_post_install_commands
 
 
 LOCAL_SKILLS_MOUNT_ROOT = PurePosixPath("/tmp/notes-assistant/local-skills")
@@ -33,10 +36,18 @@ class _LocalArtifacts:
 class LocalSkillsPluginService:
     name = "local-skills"
 
-    def __init__(self, source_path: str | Path) -> None:
+    def __init__(
+        self,
+        source_path: str | Path,
+        *,
+        post_install_commands: list[LocalSkillPostInstallCommand] | None = None,
+    ) -> None:
         self.source_path = Path(source_path).expanduser().resolve()
         self._source_container_path = _source_mount_path(self.source_path)
         self._artifacts = _discover_artifacts(self.source_path)
+        self._post_install_commands = validate_post_install_commands(
+            post_install_commands or ()
+        )
 
     def configure_image(self, image: ImageSpec) -> None:
         return None
@@ -65,6 +76,9 @@ class LocalSkillsPluginService:
                     _install_command(self._source_container_path, self._artifacts),
                 ],
             )
+        )
+        container.startup_tasks.extend(
+            post_install_startup_tasks(self._post_install_commands)
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:

@@ -58,7 +58,7 @@ class VideoProcessingPluginService:
         image.env["CHROMIUM_EXECUTABLE_PATH"] = CHROMIUM_EXECUTABLE_PATH
 
     def configure_container(self, container: ContainerSpec) -> None:
-        return None
+        container.shm_size = "1g"
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
         result = runtime.exec(["/bin/sh", "-lc", _health_command()])
@@ -73,6 +73,7 @@ def _health_command() -> str:
             "set -eu",
             *command_checks,
             'test -x "$CHROMIUM_EXECUTABLE_PATH"',
+            "\"$CHROMIUM_EXECUTABLE_PATH\" --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<html>ok</html>' | grep -q ok",
             "fc-list | grep -q .",
             "python3 - <<'PY'",
             "import PIL",

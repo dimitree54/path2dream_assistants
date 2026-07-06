@@ -76,6 +76,7 @@ def test_configure_image_declares_video_processing_dependencies() -> None:
     assert container_spec.volumes == {}
     assert container_spec.ports == {}
     assert container_spec.command is None
+    assert container_spec.shm_size == "1g"
     assert container_spec.startup_tasks == []
     assert container_spec.managed_processes == []
     assert container_spec.state == {}
@@ -94,6 +95,9 @@ def test_post_start_checks_required_cli_tools_chromium_fonts_and_python_modules(
     for command in REQUIRED_CLI_COMMANDS:
         assert f"command -v {command}" in command_text
     assert 'test -x "$CHROMIUM_EXECUTABLE_PATH"' in command_text
+    assert "--dump-dom" in command_text
+    assert "data:text/html,<html>ok</html>" in command_text
+    assert "grep -q ok" in command_text
     assert "fc-list" in command_text
     assert "import PIL" in command_text
     assert "import pillow_heif" in command_text

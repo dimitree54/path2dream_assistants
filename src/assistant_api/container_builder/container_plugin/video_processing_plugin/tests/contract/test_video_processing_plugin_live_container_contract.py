@@ -29,6 +29,12 @@ def test_live_container_supports_video_image_and_remotion_rendering() -> None:
         )
 
     try:
+        assert running.container_spec.shm_size == "1g"
+        _run_probe(
+            running.container,
+            _shared_memory_probe_script(),
+            "video-processing-shm-probe-ok",
+        )
         _run_probe(running.container, _media_probe_script(), "video-processing-media-probe-ok")
         _run_probe(
             running.container,
@@ -102,6 +108,17 @@ def _media_probe_script() -> str:
     )
 
 
+def _shared_memory_probe_script() -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            "shm_mb=$(df -m /dev/shm | awk 'NR==2 {print $2}')",
+            "awk \"BEGIN {exit !($shm_mb >= 900)}\"",
+            "printf '%s\\n' video-processing-shm-probe-ok",
+        ]
+    )
+
+
 def _chromium_probe_script() -> str:
     return "\n".join(
         [
@@ -113,7 +130,8 @@ def _chromium_probe_script() -> str:
             "fc-list | grep -qi 'noto color emoji'",
             "work_dir=$(mktemp -d)",
             "cd \"$work_dir\"",
-            "\"$CHROMIUM_EXECUTABLE_PATH\" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage --hide-scrollbars --window-size=320,240 --screenshot=shot.png about:blank",
+            "\"$CHROMIUM_EXECUTABLE_PATH\" --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<html>ok</html>' | grep -q ok",
+            "\"$CHROMIUM_EXECUTABLE_PATH\" --headless --no-sandbox --disable-gpu --hide-scrollbars --window-size=320,240 --screenshot=shot.png about:blank",
             "test \"$(identify -format '%wx%h' shot.png)\" = '320x240'",
             "file shot.png | grep -q 'PNG image data'",
             "printf '%s\\n' video-processing-chromium-probe-ok",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -19,6 +19,10 @@ from assistant_api.container_builder.container_plugin.opencode_persistence_plugi
 from assistant_api.container_builder.container_plugin.opencode_server_plugin import (
     OpenCodeServerPluginService,
 )
+from assistant_api.container_builder.container_plugin.video_processing_plugin import (
+    VideoProcessingPluginService,
+)
+from assistant_api.models import LocalSkillPostInstallCommand
 from local_skills_contract_helpers import available_tcp_port, make_source
 
 
@@ -27,6 +31,7 @@ def test_live_container_installs_local_skill_before_opencode_starts(
     tmp_path: Path,
 ) -> None:
     source = make_source(tmp_path / "private-artifacts")
+    _write_npm_probe_project(source / ".opencode" / "skills" / "private-skill")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     host_port = available_tcp_port()
@@ -42,7 +47,25 @@ def test_live_container_installs_local_skill_before_opencode_starts(
                 persist_agents=False,
             ),
             LocalDirMountPluginService(workspace),
-            LocalSkillsPluginService(source),
+            VideoProcessingPluginService(),
+            LocalSkillsPluginService(
+                source,
+                post_install_commands=[
+                    LocalSkillPostInstallCommand(
+                        name="install-private-skill-npm-deps",
+                        working_dir=PurePosixPath("skills/private-skill"),
+                        command=[
+                            "/bin/sh",
+                            "-lc",
+                            (
+                                "npm ci --no-audit --no-fund --loglevel=error "
+                                "&& printf '%s\\n' local-skill-post-install-prepared "
+                                "> postinstall.marker"
+                            ),
+                        ],
+                    )
+                ],
+            ),
             OpenCodeServerPluginService(host_port=host_port),
         ],
         container_name=f"notes-assistant-local-skills-test-{os.getpid()}",
@@ -73,6 +96,8 @@ def _probe_script() -> str:
             "test -r /root/.config/opencode/skills/private-skill/SKILL.md",
             "grep -q 'private skill marker' /root/.config/opencode/skills/private-skill/SKILL.md",
             "test -r /root/.config/opencode/skills/private-skill/references/notes.md",
+            "test -r /root/.config/opencode/skills/private-skill/package-lock.json",
+            "grep -q local-skill-post-install-prepared /root/.config/opencode/skills/private-skill/postinstall.marker",
             "test -r /root/.config/opencode/agents/private-agent.md",
             "test -r /root/.config/opencode/AGENTS.md",
             "test -r /root/.config/opencode/opencode.json",
@@ -121,3 +146,39 @@ def _iter_build_log_entries(build_log: object) -> Iterable[object]:
     if isinstance(build_log, Iterable):
         return build_log
     return []
+
+
+def _write_npm_probe_project(skill_dir: Path) -> None:
+    (skill_dir / "package.json").write_text(
+        "\n".join(
+            [
+                "{",
+                '  "name": "local-skill-post-install-probe",',
+                '  "version": "1.0.0",',
+                '  "private": true',
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (skill_dir / "package-lock.json").write_text(
+        "\n".join(
+            [
+                "{",
+                '  "name": "local-skill-post-install-probe",',
+                '  "version": "1.0.0",',
+                '  "lockfileVersion": 3,',
+                '  "requires": true,',
+                '  "packages": {',
+                '    "": {',
+                '      "name": "local-skill-post-install-probe",',
+                '      "version": "1.0.0"',
+                "    }",
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
