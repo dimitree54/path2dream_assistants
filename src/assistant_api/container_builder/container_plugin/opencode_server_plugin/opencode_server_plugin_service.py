@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import shlex
+from pathlib import Path
 from pathlib import PurePosixPath
 
 from assistant_api.container_builder.container_plugin import OPENCODE_RUNTIME_STATE_KEY
@@ -15,6 +17,7 @@ from assistant_api.models import (
 
 class OpenCodeServerPluginService:
     name = "opencode-server"
+    _opencode_image = "ghcr.io/anomalyco/opencode:1.17.15"
 
     def __init__(
         self,
@@ -22,14 +25,28 @@ class OpenCodeServerPluginService:
         container_port: int = 4096,
         wait_for_mount: bool = False,
         host: str | None = None,
+        max_retries: int = 5,
     ) -> None:
         self.host_port = host_port
         self.container_port = container_port
         self.wait_for_mount = wait_for_mount
         self.host = _validate_host(host)
+        self.max_retries = _validate_max_retries(max_retries)
         self._working_dir: PurePosixPath | None = None
 
     def configure_image(self, image: ImageSpec) -> None:
+        image.base_image = self._opencode_image
+        image.apk_packages.append("python3")
+        patch_source = Path(__file__).with_name("_retry_patch.py").read_bytes()
+        encoded = base64.b64encode(patch_source).decode("ascii")
+        image.run_commands.append(
+            "OPENCODE_RETRY_PATCH=1 python3 -c "
+            + shlex.quote(
+                "import base64;exec(base64.b64decode(" + repr(encoded) + "))"
+            )
+            + " --binary /usr/local/bin/opencode"
+            + f" --max-retries {self.max_retries}"
+        )
         return None
 
     def configure_container(self, container: ContainerSpec) -> None:
@@ -107,6 +124,14 @@ def _validate_host(value: str | None) -> str | None:
     if value is None:
         return None
     PublishedPort(host_port=1, host=value)
+    return value
+
+
+def _validate_max_retries(value: int) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError("max_retries must be an integer between 0 and 9")
+    if not 0 <= value <= 9:
+        raise ValueError("max_retries must be an integer between 0 and 9")
     return value
 
 

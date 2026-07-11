@@ -28,11 +28,32 @@ def test_opencode_server_init_signature_defaults() -> None:
         "container_port",
         "wait_for_mount",
         "host",
+        "max_retries",
     ]
     assert signature.parameters["host_port"].default == 4096
     assert signature.parameters["container_port"].default == 4096
     assert signature.parameters["wait_for_mount"].default is False
     assert signature.parameters["host"].default is None
+    assert signature.parameters["max_retries"].default == 5
+
+
+def test_opencode_server_plugin_pins_and_patches_owned_runtime() -> None:
+    plugin = OpenCodeServerPluginService(max_retries=3)
+    image_spec = ImageSpec()
+
+    plugin.configure_image(image_spec)
+
+    assert image_spec.base_image == "ghcr.io/anomalyco/opencode:1.17.15"
+    assert "python3" in image_spec.apk_packages
+    install = "\n".join(image_spec.run_commands)
+    assert "OPENCODE_RETRY_PATCH" in install
+    assert "--max-retries 3" in install
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_opencode_server_plugin_rejects_invalid_max_retries(value: object) -> None:
+    with pytest.raises((TypeError, ValueError), match="max_retries"):
+        OpenCodeServerPluginService(max_retries=value)  # type: ignore[arg-type]
 
 
 def test_opencode_server_plugin_adds_mount_gated_command_and_port_without_persistence() -> None:
@@ -100,12 +121,12 @@ def test_opencode_server_wait_for_mount_uses_infinite_wait_loop() -> None:
     assert "Required mount is not ready" not in command_text
 
 
-def test_opencode_server_plugin_does_not_configure_image_and_self_checks_post_start() -> None:
+def test_opencode_server_plugin_configures_retry_patch_and_self_checks_post_start() -> None:
     plugin = OpenCodeServerPluginService(host_port=4097)
     image_spec = ImageSpec()
 
     assert plugin.configure_image(image_spec) is None
-    assert image_spec.run_commands == []
+    assert image_spec.run_commands
     container = _SuccessfulExecContainer()
     plugin.post_start(
         ContainerRuntimeContext(docker_client=object(), container=container, state={})

@@ -39,6 +39,7 @@ class OpenCodeServerPluginService:
         container_port: int = 4096,
         wait_for_mount: bool = False,
         host: str | None = None,
+        max_retries: int = 5,
     ) -> None:
         pass
 ```
@@ -47,6 +48,8 @@ class OpenCodeServerPluginService:
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
 During `configure_container`, the service must finalize `ContainerSpec.working_dir` before registering the OpenCode process and must record OpenCode runtime metadata in `ContainerSpec.state` using the standard OpenCode runtime state key.
+
+During `configure_image`, the service must pin OpenCode `1.17.15` and install the service-owned retry patch. Patch installation must fail if the runtime version or expected compiled-code signatures differ. The patch must be removed when an adopted upstream OpenCode release provides equivalent bounded retry behavior.
 
 The recorded metadata must contain:
 - `working_dir` — final `ContainerSpec.working_dir`, from which OpenCode is launched;
@@ -69,6 +72,13 @@ opencode serve --hostname 0.0.0.0 --port <container_port>
 - `container_port` must be the container-local OpenCode Server API port.
 - `wait_for_mount` must default to `False`.
 - `host` must be optional init-time configuration for Docker host bind address; when omitted, Docker default bind behavior must be preserved.
+- `max_retries` must configure the maximum number of transient retries after the initial provider request and must default to `5`.
+- `max_retries` must be an integer from `0` through `9`.
+- HTTP `404`, `model_not_found`, invalid or inaccessible model errors, authentication and authorization failures, malformed requests, and deterministic non-rate-limit `4xx` responses must terminate after the first provider response.
+- HTTP `429`, overloads, network interruptions, and appropriate `5xx` responses may be retried with bounded exponential backoff.
+- Once `max_retries` is exhausted, the request must terminate with the last provider error and must not leave the session in retry/busy state.
+- Retry classification, retry attempt, next delay, and terminal retry decisions must be logged without credentials or provider response bodies.
+- Retry behavior must apply to main-agent and small/title-model requests.
 - If `host` is provided, the published OpenCode Server port must bind only to that host address.
 - Invalid `host` bind values must fail fast.
 - The service must not configure persistence.
