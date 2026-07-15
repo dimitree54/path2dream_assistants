@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import shlex
 from pathlib import Path, PurePosixPath
 
@@ -11,6 +12,7 @@ from assistant_api.models import (
     ImageSpec,
     VolumeMount,
 )
+from ._host_history_database import database_check_lines
 
 
 PERSISTENCE_ROOT = PurePosixPath("/tmp/notes-assistant/opencode-persistence")
@@ -77,6 +79,18 @@ class OpenCodePersistencePluginService:
         )
 
     def configure_image(self, image: ImageSpec) -> None:
+        if self.chat_history_host_dir is None:
+            return None
+        image.apk_packages.extend(["python3", "sqlite"])
+        patch_source = Path(__file__).with_name("_sqlite_patch.py").read_bytes()
+        encoded = base64.b64encode(patch_source).decode("ascii")
+        image.run_commands.append(
+            "OPENCODE_SQLITE_PATCH=1 python3 -c "
+            + shlex.quote(
+                "import base64;exec(base64.b64decode(" + repr(encoded) + "))"
+            )
+            + " --binary /usr/local/bin/opencode"
+        )
         return None
 
     def configure_container(self, container: ContainerSpec) -> None:
@@ -146,6 +160,7 @@ class OpenCodePersistencePluginService:
                         persist_opencode_artifacts=self.persist_opencode_artifacts,
                         persist_skills=self.persist_skills,
                         persist_agents=self.persist_agents,
+                        validate_host_history=self.chat_history_host_dir is not None,
                     ),
                 ],
             )
@@ -270,6 +285,7 @@ def _persistence_setup_command(
     persist_opencode_artifacts: bool,
     persist_skills: bool,
     persist_agents: bool,
+    validate_host_history: bool,
 ) -> str:
     lines = [
         "set -eu",
@@ -298,6 +314,8 @@ def _persistence_setup_command(
                 'ln -s "$history_dir/storage" "$data_dir/storage"',
             ]
         )
+        if validate_host_history:
+            lines.extend(database_check_lines())
 
     if persist_opencode_artifacts:
         lines.append(f"artifacts_dir={shlex.quote(str(CONFIG_ARTIFACTS_PERSISTENCE_DIR))}")

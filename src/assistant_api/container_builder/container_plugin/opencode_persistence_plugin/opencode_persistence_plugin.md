@@ -81,6 +81,10 @@ The concrete Docker mount layout is an implementation detail. The public contrac
 
 When `chat_history_host_dir` is set, chat/session history is backed by a bind mount of that host directory instead of the history named volume. The container path is the same isolated history path used by the granular volume backend, and `OPENCODE_DB` points to that directory's `opencode.db`.
 
+Host-directory history uses SQLite rollback-journal `DELETE` mode instead of WAL. Before OpenCode starts, an existing database must pass `PRAGMA integrity_check`, and its journal mode must be changed to `DELETE`. A corrupt database must fail startup with a persistence-specific diagnostic; the service must preserve the database and its sidecar files without deleting, replacing, retrying, or silently starting a new history.
+
+Each `chat_history_host_dir` may be assigned to only one active OpenCode container at a time.
+
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
 
@@ -107,6 +111,11 @@ During `post_start`, the service must verify inside the container that the enabl
 - When `chat_history_host_dir` is set, the service must not use the `{data_volume}_history` named volume.
 - When `chat_history_host_dir` is set, the service must not use the full OpenCode data-directory persistence shortcut, even if every `persist_*` flag is enabled.
 - When `chat_history_host_dir` is set, `auth.json` and other non-history OpenCode state must not be written into the host history directory.
+- When `chat_history_host_dir` is set, OpenCode must use SQLite `DELETE` journal mode and must not enable WAL for the history database.
+- When `chat_history_host_dir` contains an existing database, startup must require `PRAGMA integrity_check` to return exactly `ok` before OpenCode accepts work.
+- When an existing host-history database is corrupt or cannot be checked, startup must fail with the database path and SQLite diagnostic.
+- A failed host-history integrity check must not delete, replace, retry, repair, or ignore the database or its SQLite sidecar files.
+- A `chat_history_host_dir` must not be shared by multiple active OpenCode containers.
 - When `persist_opencode_artifacts` is `False`, this service must not persist OpenCode global config/rule artifacts under `~/.config/opencode`, except categories explicitly enabled by `persist_skills` or `persist_agents`.
 - When `persist_skills` is `False`, this service must not persist `~/.config/opencode/skills`.
 - When `persist_agents` is `False`, this service must not persist `~/.config/opencode/agents`.

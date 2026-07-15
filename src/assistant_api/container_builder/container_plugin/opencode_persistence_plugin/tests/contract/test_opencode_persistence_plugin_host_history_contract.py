@@ -22,7 +22,7 @@ def test_host_history_backend_adds_bind_mount_and_opencode_db(
     history_dir = tmp_path / "history"
     history_dir.mkdir()
 
-    _image_spec, container_spec = ContainerBuilderService(
+    image_spec, container_spec = ContainerBuilderService(
         plugins=[
             OpenCodePersistencePluginService(
                 config_volume="test_oc_config",
@@ -48,10 +48,20 @@ def test_host_history_backend_adds_bind_mount_and_opencode_db(
         )
     }
     assert "test_oc_data_history" not in container_spec.volumes
+    assert {"python3", "sqlite"}.issubset(image_spec.apk_packages)
+    image_commands = "\n".join(image_spec.run_commands)
+    assert "OPENCODE_SQLITE_PATCH=1" in image_commands
+    assert "--binary /usr/local/bin/opencode" in image_commands
     assert len(container_spec.startup_tasks) == 1
     setup_command = container_spec.startup_tasks[0].command[2]
     assert "storage" in setup_command
     assert "auth.json" not in setup_command
+    assert "PRAGMA integrity_check" in setup_command
+    assert "PRAGMA journal_mode=DELETE" in setup_command
+    assert "OpenCode host-history integrity check failed" in setup_command
+    assert 'rm -f "$history_dir/opencode.db"' not in setup_command
+    assert 'rm -f "$history_dir/opencode.db-wal"' not in setup_command
+    assert 'rm -f "$history_dir/opencode.db-shm"' not in setup_command
 
 
 def test_host_history_backend_avoids_full_directory_shortcut_with_default_flags(
@@ -152,6 +162,26 @@ def test_host_history_backend_post_start_checks_mounted_history_target(
 
     assert container.commands
     assert str(HISTORY_TARGET) in container.commands[0][2]
+
+
+def test_named_volume_history_does_not_patch_or_force_rollback_journal() -> None:
+    image_spec, container_spec = ContainerBuilderService(
+        plugins=[
+            OpenCodePersistencePluginService(
+                config_volume="test_oc_config",
+                data_volume="test_oc_data",
+                persist_auth=False,
+                persist_chat_history=True,
+                persist_opencode_artifacts=False,
+                persist_skills=False,
+                persist_agents=False,
+            )
+        ]
+    )._prepare_specs()
+
+    assert "sqlite" not in image_spec.apk_packages
+    assert "OPENCODE_SQLITE_PATCH=1" not in "\n".join(image_spec.run_commands)
+    assert "PRAGMA integrity_check" not in container_spec.startup_tasks[0].command[2]
 
 
 def test_host_history_backend_requires_chat_history_enabled(tmp_path: Path) -> None:
