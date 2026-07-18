@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 
 from assistant_api.container_builder._errors import ConfigurationError
@@ -19,6 +20,8 @@ from assistant_api.models import (
 )
 
 from ._auth_rotation import (
+    AUTH_ROTATION_RESULT_FALLBACK,
+    AUTH_ROTATION_RESULT_PATH,
     OpenAIProviderAuthRotationError,
     validate_candidate_auth_file,
     validate_openai_opencode_model,
@@ -34,6 +37,10 @@ DEFAULT_PROBE_VARIANT = "low"
 DEFAULT_PROBE_MESSAGE = "hi"
 DEFAULT_PROBE_TIMEOUT_SECONDS = 180
 ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+FALLBACK_AUTH_ALERT_MESSAGE = (
+    "OpenAI auth pool failed probe; using OPENAI_API_KEY fallback"
+)
+_LOGGER = logging.getLogger(__name__)
 
 
 class OpenAIProviderAuthRotationPluginService:
@@ -49,6 +56,7 @@ class OpenAIProviderAuthRotationPluginService:
         probe_message: str = DEFAULT_PROBE_MESSAGE,
         probe_expected_text: str | None = None,
         probe_timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS,
+        on_auth_alert: Callable[[str], None] | None = None,
     ) -> None:
         self.candidate_auth_files = _validate_candidate_auth_files(candidate_auth_files)
         self.fallback_api_token_env_var = _validate_env_var_name(fallback_api_token_env_var)
@@ -61,6 +69,7 @@ class OpenAIProviderAuthRotationPluginService:
             probe_expected_text,
         )
         self.probe_timeout_seconds = _validate_timeout(probe_timeout_seconds)
+        self._on_auth_alert = on_auth_alert
 
     def configure_image(self, image: ImageSpec) -> None:
         image.apk_packages.append("python3")
@@ -105,7 +114,30 @@ class OpenAIProviderAuthRotationPluginService:
         )
 
     def post_start(self, runtime: ContainerRuntimeContext) -> None:
+        if self._on_auth_alert is None:
+            return
+        result = _read_rotation_result(runtime)
+        if result != AUTH_ROTATION_RESULT_FALLBACK:
+            return
+        try:
+            self._on_auth_alert(FALLBACK_AUTH_ALERT_MESSAGE)
+        except Exception:
+            _LOGGER.exception(
+                "OpenAI auth-rotation fallback alert callback failed"
+            )
+
+
+def _read_rotation_result(runtime: ContainerRuntimeContext) -> str | None:
+    exec_result = runtime.exec(
+        [
+            "/bin/sh",
+            "-lc",
+            f"cat {AUTH_ROTATION_RESULT_PATH}",
+        ]
+    )
+    if exec_result.exit_code != 0:
         return None
+    return exec_result.output.strip() or None
 
 
 def _validate_candidate_auth_files(values: Sequence[str | Path]) -> tuple[Path, ...]:

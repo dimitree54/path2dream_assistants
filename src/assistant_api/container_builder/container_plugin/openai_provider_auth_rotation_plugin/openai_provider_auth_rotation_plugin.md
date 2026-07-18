@@ -43,7 +43,7 @@ plugin = OpenAIProviderAuthRotationPluginService(
 
 ## Init time
 ```python
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 class OpenAIProviderAuthRotationPluginService:
@@ -57,6 +57,7 @@ class OpenAIProviderAuthRotationPluginService:
         probe_message: str = "hi",
         probe_expected_text: str | None = None,
         probe_timeout_seconds: int = 180,
+        on_auth_alert: Callable[[str], None] | None = None,
     ) -> None:
         pass
 ```
@@ -74,6 +75,8 @@ Candidate files are mounted read-only into the container. Auth JSON, OAuth token
 `probe_expected_text`, when set, is text that a successful real model probe must return. When it is not set, a successful probe requires exit code 0 and non-empty model output.
 
 `probe_timeout_seconds` is the bounded timeout for each real model probe.
+
+`on_auth_alert` is an optional host-side callback. After startup succeeds, when every candidate failed and the run continued on the fallback API token, `post_start` invokes the callback with a credential-free human-readable message. Candidate success does not invoke the callback. Callback failures must not fail container startup.
 
 ## Runtime
 Runtime-интерфейс не добавляет ничего нового, а наследуется от [[../container_plugin.md|ContainerPluginService]].
@@ -95,7 +98,7 @@ During startup, the service must:
 - run a real `opencode run` probe with `probe_model`, `probe_variant`, and `probe_message`;
 - accept a candidate only when the probe exits successfully and returns valid output.
 
-If all candidate auth files fail, the service must install fallback API-token auth from `fallback_api_token_env_var` and validate it with the same real `opencode run` probe.
+If all candidate auth files fail, the service must install fallback API-token auth from `fallback_api_token_env_var` and validate it with the same real `opencode run` probe. A successful fallback must record a credential-free result marker so `post_start` can notify `on_auth_alert` when configured.
 
 If no candidate and no fallback works, startup must fail fast.
 
@@ -173,6 +176,8 @@ Contract tests must cover:
 - startup task preserves unrelated active provider credentials;
 - startup task writes through OpenCode persistence auth symlink;
 - startup task falls back to `OPENAI_API_KEY` only after all candidates fail;
+- successful fallback notifies `on_auth_alert` from `post_start` without credentials;
+- successful candidate selection does not notify `on_auth_alert`;
 - startup task fails fast when all candidates and fallback fail;
 - startup task command text, captured logs, Dockerfile commands, and exception messages do not include token or auth JSON content.
 

@@ -34,6 +34,7 @@ def test_public_service_import_and_init_signature(tmp_path) -> None:
         "probe_message",
         "probe_expected_text",
         "probe_timeout_seconds",
+        "on_auth_alert",
     ]
     plugin = service([auth_file])
     assert plugin.fallback_api_token_env_var == "OPENAI_API_KEY"

@@ -12,6 +12,12 @@ from typing import Any
 
 OPENCODE_CONFIG_SCHEMA = "https://opencode.ai/config.json"
 PROVIDER_ID = "openai"
+AUTH_ROTATION_RESULT_PATH = Path(
+    "/tmp/notes-assistant/openai-auth-rotation-result"
+)
+AUTH_ROTATION_RESULT_CANDIDATE = "candidate"
+AUTH_ROTATION_RESULT_FALLBACK = "fallback_api_token"
+AUTH_ROTATION_RESULT_PREFIX = "openai_auth_rotation_result="
 
 
 class OpenAIProviderAuthRotationError(RuntimeError):
@@ -60,6 +66,7 @@ def install_rotated_auth(
                 probe_timeout_seconds=probe_timeout_seconds,
                 working_dir=working_dir,
             )
+            _report_rotation_result(AUTH_ROTATION_RESULT_CANDIDATE)
             return
         except Exception as error:
             failures.append(f"candidate {index}: {_safe_error(error)}")
@@ -78,6 +85,7 @@ def install_rotated_auth(
             probe_timeout_seconds=probe_timeout_seconds,
             working_dir=working_dir,
         )
+        _report_rotation_result(AUTH_ROTATION_RESULT_FALLBACK)
         return
     except Exception as error:
         failures.append(f"fallback: {_safe_error(error)}")
@@ -86,6 +94,13 @@ def install_rotated_auth(
             "No OpenAI provider auth candidate or fallback API token passed probe: "
             + "; ".join(failures)
         ) from error
+
+
+def _report_rotation_result(result: str) -> None:
+    marker = f"{AUTH_ROTATION_RESULT_PREFIX}{result}"
+    print(marker, flush=True)
+    AUTH_ROTATION_RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AUTH_ROTATION_RESULT_PATH.write_text(f"{result}\n", encoding="utf-8")
 
 
 def validate_candidate_auth_file(path: Path) -> None:

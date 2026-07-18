@@ -65,6 +65,10 @@ def test_startup_selects_first_working_candidate_and_preserves_active_providers(
     assert active["openai"] == api_auth("good-token", source="second")
     assert active["github"] == {"type": "api", "key": "active-gh"}
     assert "candidate-gh" not in json.dumps(active)
+    assert (
+        _auth_rotation.AUTH_ROTATION_RESULT_PATH.read_text(encoding="utf-8").strip()
+        == _auth_rotation.AUTH_ROTATION_RESULT_CANDIDATE
+    )
 
 
 def test_startup_uses_random_order_without_retrying_candidates(
@@ -129,6 +133,10 @@ def test_startup_falls_back_to_api_token_after_all_candidates_fail(
 
     assert seen_keys == ["bad-token", TOKEN_VALUE]
     assert read_json(active_path)["openai"] == {"type": "api", "key": TOKEN_VALUE}
+    assert (
+        _auth_rotation.AUTH_ROTATION_RESULT_PATH.read_text(encoding="utf-8").strip()
+        == _auth_rotation.AUTH_ROTATION_RESULT_FALLBACK
+    )
 
 
 def test_startup_restores_original_active_auth_when_all_attempts_fail(
