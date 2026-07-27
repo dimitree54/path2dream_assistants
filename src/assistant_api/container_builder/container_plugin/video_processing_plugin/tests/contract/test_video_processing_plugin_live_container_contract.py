@@ -43,6 +43,11 @@ def test_live_container_supports_video_image_and_remotion_rendering() -> None:
         )
         _run_probe(
             running.container,
+            _python_modules_probe_script(),
+            "video-processing-python-modules-probe-ok",
+        )
+        _run_probe(
+            running.container,
             _remotion_probe_script(),
             "video-processing-remotion-probe-ok",
         )
@@ -115,6 +120,20 @@ def _shared_memory_probe_script() -> str:
             "shm_mb=$(df -m /dev/shm | awk 'NR==2 {print $2}')",
             "awk \"BEGIN {exit !($shm_mb >= 900)}\"",
             "printf '%s\\n' video-processing-shm-probe-ok",
+        ]
+    )
+
+
+def _python_modules_probe_script() -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            "python3 - <<'PY'",
+            "import PIL",
+            "import pillow_heif",
+            "import requests",
+            "PY",
+            "printf '%s\\n' video-processing-python-modules-probe-ok",
         ]
     )
 

@@ -67,7 +67,7 @@ def test_configure_image_declares_video_processing_dependencies() -> None:
         "util-linux",
         "gcompat",
     ]
-    assert image_spec.python_packages == ["pillow", "pillow-heif"]
+    assert image_spec.python_packages == ["pillow", "pillow-heif", "requests"]
     assert image_spec.env == {"CHROMIUM_EXECUTABLE_PATH": "/usr/bin/chromium-browser"}
     assert image_spec.workdir is None
     assert image_spec.command is None
@@ -108,6 +108,7 @@ def test_post_start_checks_required_cli_tools_gcompat_chromium_fonts_and_python_
     assert "fc-list" in command_text
     assert "import PIL" in command_text
     assert "import pillow_heif" in command_text
+    assert "import requests" in command_text
 
 
 def test_post_start_fails_when_dependency_health_check_fails() -> None:

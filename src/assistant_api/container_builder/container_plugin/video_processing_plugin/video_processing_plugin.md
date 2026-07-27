@@ -13,7 +13,7 @@ tags:
 
 То есть он:
 - устанавливает `ffmpeg` (включая `ffprobe`) для cutting, frame extraction, resize, conversion и audio work;
-- устанавливает полный набор image processing tooling как superset: ImageMagick, WebP CLI utilities, HEIC/HEIF CLI utilities, JPEG и PNG optimizers, `file`, system Python с `pillow` и `pillow-heif`;
+- устанавливает полный набор image processing tooling как superset: ImageMagick, WebP CLI utilities, HEIC/HEIF CLI utilities, JPEG и PNG optimizers, `file`, system Python с `pillow`, `pillow-heif` и `requests`;
 - устанавливает Node.js с `npm`/`npx` для запуска web-based renderers;
 - устанавливает headless Chromium с его runtime libs и базовым набором ttf fonts (включая emoji font) для on-video text rendering;
 - устанавливает `gcompat`, чтобы published Remotion Linux compositor packages могли использовать соответствующий архитектуре glibc compatibility loader на Alpine;
@@ -77,7 +77,8 @@ System package requirements:
 
 Python package requirements:
 - `pillow` — provides Python image read/resize/save support for JPEG, PNG, WebP, TIFF, and related formats;
-- `pillow-heif` — provides Python HEIC/HEIF support for phone photos.
+- `pillow-heif` — provides Python HEIC/HEIF support for phone photos;
+- `requests` — provides image-level HTTP access for visual tooling such as SAM3 helpers without per-job dependency installation.
 
 Environment variable contract:
 - during `configure_image`, the service must set `ImageSpec.env["CHROMIUM_EXECUTABLE_PATH"]` to the absolute path of the system Chromium executable (`/usr/bin/chromium-browser`);
@@ -121,14 +122,15 @@ Required Remotion compatibility checks:
 
 Required Python modules:
 - `PIL`;
-- `pillow_heif`.
+- `pillow_heif`;
+- `requests`.
 
 # Requirements
 - Сервис должен устанавливать все image dependencies через standard image dependency fields, not raw package-manager install commands.
 - Сервис должен использовать `ImageSpec.apk_packages` для системных packages.
 - Сервис должен использовать `ImageSpec.python_packages` для Python packages.
 - Сервис должен устанавливать `ffmpeg` и обеспечивать доступность commands `ffmpeg` and `ffprobe`.
-- Сервис должен предоставлять полный superset image processing tooling: ImageMagick (`magick`, `identify`), WebP tools (`cwebp`, `dwebp`, `gif2webp`), HEIC/HEIF tools (`heif-convert`, `heif-info`), `jpegoptim`, `optipng`, `pngquant`, `file`, system `python3`/`py3-pip` c `pillow` и `pillow-heif`.
+- Сервис должен предоставлять полный superset image processing tooling: ImageMagick (`magick`, `identify`), WebP tools (`cwebp`, `dwebp`, `gif2webp`), HEIC/HEIF tools (`heif-convert`, `heif-info`), `jpegoptim`, `optipng`, `pngquant`, `file`, system `python3`/`py3-pip` c `pillow`, `pillow-heif` и `requests`.
 - Сервис должен устанавливать Node.js и обеспечивать доступность commands `node`, `npm`, and `npx`.
 - Сервис должен устанавливать headless Chromium с runtime libs (`nss`, `freetype`, `harfbuzz`, `ca-certificates`).
 - Сервис должен устанавливать базовый ttf font set и emoji font, доступные через `fontconfig`.
@@ -149,7 +151,8 @@ Required Python modules:
 - Сервис должен fail fast during `post_start` if the architecture-native `gcompat` loader is missing, not executable, or the container architecture is unsupported.
 - Сервис должен fail fast during `post_start` if no fonts are visible through `fc-list`.
 - Сервис должен fail fast during `post_start` if Chromium cannot launch headlessly against a no-network data URL.
-- Сервис должен fail fast during `post_start` if `PIL` or `pillow_heif` cannot be imported by `python3`.
+- Сервис должен fail fast during `post_start` if `PIL`, `pillow_heif`, or `requests` cannot be imported by `python3`.
+- Image-level visual tooling должно использовать preinstalled `requests`, `PIL` и `pillow_heif` через system `python3` без per-job `pip install`, temporary virtual environment или dependency download.
 - Сервис не должен включать GPU/hardware acceleration в контракт: rendering выполняется на CPU.
 - Сервис не должен выполнять video/image conversion, rendering, upload, download, or persistence behavior сам.
 

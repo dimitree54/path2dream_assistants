@@ -27,7 +27,7 @@ SYSTEM_PACKAGES = [
     "util-linux",
     "gcompat",
 ]
-PYTHON_PACKAGES = ["pillow", "pillow-heif"]
+PYTHON_PACKAGES = ["pillow", "pillow-heif", "requests"]
 CHROMIUM_EXECUTABLE_PATH = "/usr/bin/chromium-browser"
 CLI_COMMANDS = [
     "ffmpeg",
@@ -90,6 +90,7 @@ def _health_command() -> str:
             "python3 - <<'PY'",
             "import PIL",
             "import pillow_heif",
+            "import requests",
             "PY",
         ]
     )
