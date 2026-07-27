@@ -117,6 +117,7 @@ def test_post_start_checks_required_cli_tools_gcompat_chromium_fonts_and_python_
     assert "DejaVu Sans:style=Bold" in command_text
     assert "DejaVu Sans Condensed:style=Bold" in command_text
     assert "apk info -W" in command_text
+    assert "is owned by font-dejavu-" in command_text
     assert "/usr/share/licenses/font-dejavu/LICENSE" in command_text
     assert "7a083b136e64d064794c3419751e5c7dd10d2f64c108fe5ba161eae5e5958a93" in command_text
     assert "import PIL" in command_text
