@@ -65,6 +65,7 @@ def test_configure_image_declares_video_processing_dependencies() -> None:
         "ttf-freefont",
         "font-noto-emoji",
         "util-linux",
+        "gcompat",
     ]
     assert image_spec.python_packages == ["pillow", "pillow-heif"]
     assert image_spec.env == {"CHROMIUM_EXECUTABLE_PATH": "/usr/bin/chromium-browser"}
@@ -82,7 +83,7 @@ def test_configure_image_declares_video_processing_dependencies() -> None:
     assert container_spec.state == {}
 
 
-def test_post_start_checks_required_cli_tools_chromium_fonts_and_python_modules() -> None:
+def test_post_start_checks_required_cli_tools_gcompat_chromium_fonts_and_python_modules() -> None:
     plugin = VideoProcessingPluginService()
     container = _RecordingContainer(exit_code=0)
 
@@ -94,6 +95,12 @@ def test_post_start_checks_required_cli_tools_chromium_fonts_and_python_modules(
     command_text = container.commands[0][2]
     for command in REQUIRED_CLI_COMMANDS:
         assert f"command -v {command}" in command_text
+    assert "apk info -e gcompat" in command_text
+    assert "uname -m" in command_text
+    assert "/lib/ld-linux-aarch64.so.1" in command_text
+    assert "/lib64/ld-linux-x86-64.so.2" in command_text
+    assert "Unsupported container architecture:" in command_text
+    assert '"$container_arch"' in command_text
     assert 'test -x "$CHROMIUM_EXECUTABLE_PATH"' in command_text
     assert "--dump-dom" in command_text
     assert "data:text/html,<html>ok</html>" in command_text

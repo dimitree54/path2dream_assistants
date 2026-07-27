@@ -25,6 +25,7 @@ SYSTEM_PACKAGES = [
     "ttf-freefont",
     "font-noto-emoji",
     "util-linux",
+    "gcompat",
 ]
 PYTHON_PACKAGES = ["pillow", "pillow-heif"]
 CHROMIUM_EXECUTABLE_PATH = "/usr/bin/chromium-browser"
@@ -72,6 +73,17 @@ def _health_command() -> str:
         [
             "set -eu",
             *command_checks,
+            "apk info -e gcompat >/dev/null",
+            "container_arch=$(uname -m)",
+            'case "$container_arch" in',
+            "  aarch64) gcompat_loader=/lib/ld-linux-aarch64.so.1 ;;",
+            "  x86_64) gcompat_loader=/lib64/ld-linux-x86-64.so.2 ;;",
+            "  *)",
+            "    printf 'Unsupported container architecture: %s\\n' \"$container_arch\" >&2",
+            "    exit 1",
+            "    ;;",
+            "esac",
+            'test -x "$gcompat_loader"',
             'test -x "$CHROMIUM_EXECUTABLE_PATH"',
             "\"$CHROMIUM_EXECUTABLE_PATH\" --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<html>ok</html>' | grep -q ok",
             "fc-list | grep -q .",

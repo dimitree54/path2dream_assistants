@@ -16,6 +16,7 @@ tags:
 - устанавливает полный набор image processing tooling как superset: ImageMagick, WebP CLI utilities, HEIC/HEIF CLI utilities, JPEG и PNG optimizers, `file`, system Python с `pillow` и `pillow-heif`;
 - устанавливает Node.js с `npm`/`npx` для запуска web-based renderers;
 - устанавливает headless Chromium с его runtime libs и базовым набором ttf fonts (включая emoji font) для on-video text rendering;
+- устанавливает `gcompat`, чтобы published Remotion Linux compositor packages могли использовать соответствующий архитектуре glibc compatibility loader на Alpine;
 - задаёт documented env var `CHROMIUM_EXECUTABLE_PATH` с путём к system Chromium executable, чтобы renderers использовали system browser вместо скачивания Chrome Headless Shell at render time;
 - запрашивает увеличенный `/dev/shm` для стабильного headless Chromium rendering;
 - проверяет после запуска container, что заявленные CLI tools, Chromium executable, fonts и Python modules доступны;
@@ -71,7 +72,8 @@ System package requirements:
 - `fontconfig` — provides font discovery (`fc-list`) for on-video text rendering;
 - `ttf-freefont` — provides a base ttf font set;
 - `font-noto-emoji` — provides an emoji font (Alpine registers the family as `Noto Color Emoji`);
-- `util-linux` — provides `setpriv`, required by Remotion/Chromium browser launch on Alpine.
+- `util-linux` — provides `setpriv`, required by Remotion/Chromium browser launch on Alpine;
+- `gcompat` — provides the architecture-native glibc compatibility loader required by published Remotion Linux compositor executables on Alpine (`/lib/ld-linux-aarch64.so.1` for `arm64`, `/lib64/ld-linux-x86-64.so.2` for `x64`).
 
 Python package requirements:
 - `pillow` — provides Python image read/resize/save support for JPEG, PNG, WebP, TIFF, and related formats;
@@ -83,7 +85,7 @@ Environment variable contract:
 
 During `configure_container`, the service must set `ContainerSpec.shm_size` to `1g`.
 
-During `post_start`, the service must verify inside the running container that the required CLI commands, the Chromium executable, fonts, Python modules, and no-network headless Chromium execution are available.
+During `post_start`, the service must verify inside the running container that the required CLI commands, the architecture-native `gcompat` loader, the Chromium executable, fonts, Python modules, and no-network headless Chromium execution are available.
 
 Required CLI commands:
 - `ffmpeg`;
@@ -109,6 +111,14 @@ Required Chromium checks:
 - `fc-list` reports at least one installed font.
 - `$CHROMIUM_EXECUTABLE_PATH --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<html>ok</html>'` must produce the expected DOM text without downloading a browser.
 
+Required Remotion compatibility checks:
+- `gcompat` must be installed through `ImageSpec.apk_packages`;
+- on `aarch64`, `/lib/ld-linux-aarch64.so.1` must exist and be executable;
+- on `x86_64`, `/lib64/ld-linux-x86-64.so.2` must exist and be executable;
+- other container architectures are unsupported and must fail fast;
+- QA must perform a real Remotion render on native `arm64` and native `x64`, verify the compositor package selected for `process.arch`, and probe the resulting non-empty MP4;
+- the service must not rewrite compositor executables, create workspace-local loader symlinks, or emulate a different production architecture.
+
 Required Python modules:
 - `PIL`;
 - `pillow_heif`.
@@ -123,9 +133,12 @@ Required Python modules:
 - Сервис должен устанавливать headless Chromium с runtime libs (`nss`, `freetype`, `harfbuzz`, `ca-certificates`).
 - Сервис должен устанавливать базовый ttf font set и emoji font, доступные через `fontconfig`.
 - Сервис должен устанавливать `util-linux` и обеспечивать доступность command `setpriv` для Remotion/Chromium launch на Alpine.
+- Сервис должен устанавливать `gcompat` через `ImageSpec.apk_packages` и проверять architecture-native compatibility loader для Remotion compositor execution.
 - Сервис должен задавать `CHROMIUM_EXECUTABLE_PATH` в `ImageSpec.env` со значением абсолютного пути system Chromium executable.
 - Сервис должен задавать `ContainerSpec.shm_size="1g"` для увеличенного `/dev/shm`.
 - Container должен позволять real web-based render (Remotion) через system Chromium по пути из `CHROMIUM_EXECUTABLE_PATH`, без скачивания Chrome Headless Shell.
+- Container должен использовать published Remotion musl compositor package для native `process.arch`: `@remotion/compositor-linux-arm64-musl` на `arm64` и `@remotion/compositor-linux-x64-musl` на `x64`.
+- Сервис не должен patch/rewrite compositor executable, создавать loader symlink внутри user workspace или подменять production architecture через emulation.
 - Сервис не должен добавлять startup tasks.
 - Сервис не должен добавлять managed processes.
 - Сервис не должен изменять `ContainerSpec.command`.
@@ -133,6 +146,7 @@ Required Python modules:
 - Сервис не должен требовать mount metadata or OpenCode runtime metadata.
 - Сервис должен fail fast during `post_start` if any required CLI command is missing.
 - Сервис должен fail fast during `post_start` if the Chromium executable at `$CHROMIUM_EXECUTABLE_PATH` is missing or not executable.
+- Сервис должен fail fast during `post_start` if the architecture-native `gcompat` loader is missing, not executable, or the container architecture is unsupported.
 - Сервис должен fail fast during `post_start` if no fonts are visible through `fc-list`.
 - Сервис должен fail fast during `post_start` if Chromium cannot launch headlessly against a no-network data URL.
 - Сервис должен fail fast during `post_start` if `PIL` or `pillow_heif` cannot be imported by `python3`.
