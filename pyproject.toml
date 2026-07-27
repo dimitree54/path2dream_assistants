@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "path2dream_ai_assistants"
-version = "0.6.20"
+version = "0.6.21"
 description = "Composable Docker-based OpenCode assistant container orchestration for wrapper applications."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +31,7 @@ exclude = ["*.tests", "*.tests.*"]
 "assistant_api.container_builder.container_plugin.command_monitor_plugin" = ["*.js"]
 "assistant_api.container_builder.container_plugin.google_drive_mount_plugin" = ["assets/*.PNG"]
 "assistant_api.container_builder.container_plugin.openai_provider_login_plugin" = ["assets/*.PNG"]
+"assistant_api.container_builder.container_plugin.video_processing_plugin" = ["assets/*.txt"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["tests/*", "tests/**/*"]

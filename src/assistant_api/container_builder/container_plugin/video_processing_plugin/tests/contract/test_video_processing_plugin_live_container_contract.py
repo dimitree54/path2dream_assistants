@@ -48,6 +48,11 @@ def test_live_container_supports_video_image_and_remotion_rendering() -> None:
         )
         _run_probe(
             running.container,
+            _dejavu_typography_probe_script(),
+            "video-processing-dejavu-typography-probe-ok",
+        )
+        _run_probe(
+            running.container,
             _remotion_probe_script(),
             "video-processing-remotion-probe-ok",
         )
@@ -134,6 +139,35 @@ def _python_modules_probe_script() -> str:
             "import requests",
             "PY",
             "printf '%s\\n' video-processing-python-modules-probe-ok",
+        ]
+    )
+
+
+def _dejavu_typography_probe_script() -> str:
+    return "\n".join(
+        [
+            "set -eu",
+            "work_dir=$(mktemp -d)",
+            "cd \"$work_dir\"",
+            "bold_path=$(fc-match -f '%{file}\\n' 'DejaVu Sans:style=Bold' | head -n 1)",
+            "condensed_path=$(fc-match -f '%{file}\\n' 'DejaVu Sans Condensed:style=Bold' | head -n 1)",
+            "BOLD_PATH=\"$bold_path\" CONDENSED_PATH=\"$condensed_path\" python3 - <<'PY'",
+            "import os",
+            "from PIL import ImageFont",
+            "",
+            "text = 'Caption Ω Привет 你好'",
+            "for variable in ('BOLD_PATH', 'CONDENSED_PATH'):",
+            "    font = ImageFont.truetype(os.environ[variable], size=32)",
+            "    bounds = font.getbbox(text)",
+            "    assert bounds[2] > bounds[0]",
+            "    assert bounds[3] > bounds[1]",
+            "PY",
+            "magick -background none -fill black -font DejaVu-Sans-Condensed-Bold -pointsize 32 label:'Caption Ω Привет' typography.png",
+            "test -s typography.png",
+            "identify -format '%w %h' typography.png | awk '{exit !($1 > 0 && $2 > 0)}'",
+            "fc-list | grep -qi 'noto color emoji'",
+            "test \"$(sha256sum /usr/share/licenses/font-dejavu/LICENSE | awk '{print $1}')\" = '7a083b136e64d064794c3419751e5c7dd10d2f64c108fe5ba161eae5e5958a93'",
+            "printf '%s\\n' video-processing-dejavu-typography-probe-ok",
         ]
     )
 

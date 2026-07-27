@@ -63,6 +63,7 @@ def test_configure_image_declares_video_processing_dependencies() -> None:
         "ca-certificates",
         "fontconfig",
         "ttf-freefont",
+        "font-dejavu",
         "font-noto-emoji",
         "util-linux",
         "gcompat",
@@ -71,7 +72,13 @@ def test_configure_image_declares_video_processing_dependencies() -> None:
     assert image_spec.env == {"CHROMIUM_EXECUTABLE_PATH": "/usr/bin/chromium-browser"}
     assert image_spec.workdir is None
     assert image_spec.command is None
-    assert image_spec.run_commands == ["mkdir -p /workspace"]
+    assert image_spec.run_commands[0] == "mkdir -p /workspace"
+    assert len(image_spec.run_commands) == 2
+    license_command = image_spec.run_commands[1]
+    assert "/usr/share/licenses/font-dejavu/LICENSE" in license_command
+    assert "base64 -d" in license_command
+    assert "curl" not in license_command
+    assert "wget" not in license_command
 
     assert container_spec.env == {}
     assert container_spec.volumes == {}
@@ -106,6 +113,12 @@ def test_post_start_checks_required_cli_tools_gcompat_chromium_fonts_and_python_
     assert "data:text/html,<html>ok</html>" in command_text
     assert "grep -q ok" in command_text
     assert "fc-list" in command_text
+    assert "apk info -e font-dejavu" in command_text
+    assert "DejaVu Sans:style=Bold" in command_text
+    assert "DejaVu Sans Condensed:style=Bold" in command_text
+    assert "apk info -W" in command_text
+    assert "/usr/share/licenses/font-dejavu/LICENSE" in command_text
+    assert "7a083b136e64d064794c3419751e5c7dd10d2f64c108fe5ba161eae5e5958a93" in command_text
     assert "import PIL" in command_text
     assert "import pillow_heif" in command_text
     assert "import requests" in command_text

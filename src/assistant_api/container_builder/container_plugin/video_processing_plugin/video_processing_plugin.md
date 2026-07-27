@@ -15,7 +15,7 @@ tags:
 - устанавливает `ffmpeg` (включая `ffprobe`) для cutting, frame extraction, resize, conversion и audio work;
 - устанавливает полный набор image processing tooling как superset: ImageMagick, WebP CLI utilities, HEIC/HEIF CLI utilities, JPEG и PNG optimizers, `file`, system Python с `pillow`, `pillow-heif` и `requests`;
 - устанавливает Node.js с `npm`/`npx` для запуска web-based renderers;
-- устанавливает headless Chromium с его runtime libs и базовым набором ttf fonts (включая emoji font) для on-video text rendering;
+- устанавливает headless Chromium с его runtime libs и базовым набором ttf fonts (включая DejaVu Sans Bold, DejaVu Sans Condensed Bold и emoji font) для on-video text rendering;
 - устанавливает `gcompat`, чтобы published Remotion Linux compositor packages могли использовать соответствующий архитектуре glibc compatibility loader на Alpine;
 - задаёт documented env var `CHROMIUM_EXECUTABLE_PATH` с путём к system Chromium executable, чтобы renderers использовали system browser вместо скачивания Chrome Headless Shell at render time;
 - запрашивает увеличенный `/dev/shm` для стабильного headless Chromium rendering;
@@ -71,6 +71,7 @@ System package requirements:
 - `nss`, `freetype`, `harfbuzz`, `ca-certificates` — provide Chromium runtime libs;
 - `fontconfig` — provides font discovery (`fc-list`) for on-video text rendering;
 - `ttf-freefont` — provides a base ttf font set;
+- `font-dejavu` — provides DejaVu Sans Bold and DejaVu Sans Condensed Bold for measured caption/title rendering;
 - `font-noto-emoji` — provides an emoji font (Alpine registers the family as `Noto Color Emoji`);
 - `util-linux` — provides `setpriv`, required by Remotion/Chromium browser launch on Alpine;
 - `gcompat` — provides the architecture-native glibc compatibility loader required by published Remotion Linux compositor executables on Alpine (`/lib/ld-linux-aarch64.so.1` for `arm64`, `/lib64/ld-linux-x86-64.so.2` for `x64`).
@@ -86,7 +87,7 @@ Environment variable contract:
 
 During `configure_container`, the service must set `ContainerSpec.shm_size` to `1g`.
 
-During `post_start`, the service must verify inside the running container that the required CLI commands, the architecture-native `gcompat` loader, the Chromium executable, fonts, Python modules, and no-network headless Chromium execution are available.
+During `post_start`, the service must verify inside the running container that the required CLI commands, the architecture-native `gcompat` loader, the Chromium executable, required font faces and license metadata, Python modules, and no-network headless Chromium execution are available.
 
 Required CLI commands:
 - `ffmpeg`;
@@ -112,6 +113,21 @@ Required Chromium checks:
 - `fc-list` reports at least one installed font.
 - `$CHROMIUM_EXECUTABLE_PATH --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<html>ok</html>'` must produce the expected DOM text without downloading a browser.
 
+Required font checks:
+- `font-dejavu` must be installed through `ImageSpec.apk_packages`;
+- `fc-match` must resolve `DejaVu Sans:style=Bold` to family `DejaVu Sans`;
+- `fc-match` must resolve `DejaVu Sans Condensed:style=Bold` to first family `DejaVu Sans`;
+- both resolved font files must be readable and owned by the installed `font-dejavu` Alpine package;
+- Pillow must be able to load both resolved files and measure representative Unicode text;
+- ImageMagick must be able to render text through the registered `DejaVu-Sans-Condensed-Bold` name;
+- the service must use Fontconfig-resolved paths and must not require a guessed distribution-specific font path.
+
+DejaVu license metadata:
+- the unmodified upstream DejaVu 2.37 `LICENSE` must be installed at `/usr/share/licenses/font-dejavu/LICENSE`;
+- the license file must preserve the upstream Bitstream and Arev copyright and permission notices;
+- the license file must be embedded in the generated image without a build-time or runtime network download;
+- `post_start` must fail fast if the license file is missing or does not match the bundled upstream notice.
+
 Required Remotion compatibility checks:
 - `gcompat` must be installed through `ImageSpec.apk_packages`;
 - on `aarch64`, `/lib/ld-linux-aarch64.so.1` must exist and be executable;
@@ -133,7 +149,10 @@ Required Python modules:
 - Сервис должен предоставлять полный superset image processing tooling: ImageMagick (`magick`, `identify`), WebP tools (`cwebp`, `dwebp`, `gif2webp`), HEIC/HEIF tools (`heif-convert`, `heif-info`), `jpegoptim`, `optipng`, `pngquant`, `file`, system `python3`/`py3-pip` c `pillow`, `pillow-heif` и `requests`.
 - Сервис должен устанавливать Node.js и обеспечивать доступность commands `node`, `npm`, and `npx`.
 - Сервис должен устанавливать headless Chromium с runtime libs (`nss`, `freetype`, `harfbuzz`, `ca-certificates`).
-- Сервис должен устанавливать базовый ttf font set и emoji font, доступные через `fontconfig`.
+- Сервис должен устанавливать базовый ttf font set, DejaVu Sans Bold, DejaVu Sans Condensed Bold и emoji font, доступные через `fontconfig`.
+- Сервис должен устанавливать `font-dejavu` через `ImageSpec.apk_packages`.
+- Сервис должен проверять точные DejaVu faces и readable package-owned files через Fontconfig-resolved paths, а не через guessed distribution-specific paths.
+- Сервис должен сохранять unmodified upstream DejaVu 2.37 license notice в `/usr/share/licenses/font-dejavu/LICENSE` без network download.
 - Сервис должен устанавливать `util-linux` и обеспечивать доступность command `setpriv` для Remotion/Chromium launch на Alpine.
 - Сервис должен устанавливать `gcompat` через `ImageSpec.apk_packages` и проверять architecture-native compatibility loader для Remotion compositor execution.
 - Сервис должен задавать `CHROMIUM_EXECUTABLE_PATH` в `ImageSpec.env` со значением абсолютного пути system Chromium executable.
@@ -150,9 +169,11 @@ Required Python modules:
 - Сервис должен fail fast during `post_start` if the Chromium executable at `$CHROMIUM_EXECUTABLE_PATH` is missing or not executable.
 - Сервис должен fail fast during `post_start` if the architecture-native `gcompat` loader is missing, not executable, or the container architecture is unsupported.
 - Сервис должен fail fast during `post_start` if no fonts are visible through `fc-list`.
+- Сервис должен fail fast during `post_start` if `font-dejavu`, either required DejaVu face, either resolved package-owned file, or the bundled upstream license notice is missing or invalid.
 - Сервис должен fail fast during `post_start` if Chromium cannot launch headlessly against a no-network data URL.
 - Сервис должен fail fast during `post_start` if `PIL`, `pillow_heif`, or `requests` cannot be imported by `python3`.
 - Image-level visual tooling должно использовать preinstalled `requests`, `PIL` и `pillow_heif` через system `python3` без per-job `pip install`, temporary virtual environment или dependency download.
+- Image-level visual tooling должно использовать preinstalled DejaVu faces without agent-time `apk add`, font download, or guessed `/usr/share/fonts/truetype/dejavu` paths.
 - Сервис не должен включать GPU/hardware acceleration в контракт: rendering выполняется на CPU.
 - Сервис не должен выполнять video/image conversion, rendering, upload, download, or persistence behavior сам.
 
