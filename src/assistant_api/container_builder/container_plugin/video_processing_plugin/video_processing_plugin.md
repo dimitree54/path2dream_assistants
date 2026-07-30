@@ -13,7 +13,7 @@ tags:
 
 То есть он:
 - устанавливает `ffmpeg` (включая `ffprobe`) для cutting, frame extraction, resize, conversion и audio work;
-- устанавливает полный набор image processing tooling как superset: ImageMagick, WebP CLI utilities, HEIC/HEIF CLI utilities, JPEG и PNG optimizers, `file`, system Python с `pillow`, `pillow-heif` и `requests`;
+- устанавливает полный набор image processing tooling как superset: ImageMagick, WebP CLI utilities, HEIC/HEIF CLI utilities, JPEG и PNG optimizers, `file`, system Python с `pillow`, `pillow-heif`, `requests` и locked `pyyaml`;
 - устанавливает Node.js с `npm`/`npx` для запуска web-based renderers;
 - устанавливает headless Chromium с его runtime libs и базовым набором ttf fonts (включая DejaVu Sans Bold, DejaVu Sans Condensed Bold и emoji font) для on-video text rendering;
 - устанавливает `gcompat`, чтобы published Remotion Linux compositor packages могли использовать соответствующий архитектуре glibc compatibility loader на Alpine;
@@ -79,7 +79,8 @@ System package requirements:
 Python package requirements:
 - `pillow` — provides Python image read/resize/save support for JPEG, PNG, WebP, TIFF, and related formats;
 - `pillow-heif` — provides Python HEIC/HEIF support for phone photos;
-- `requests` — provides image-level HTTP access for visual tooling such as SAM3 helpers without per-job dependency installation.
+- `requests` — provides image-level HTTP access for visual tooling such as SAM3 helpers without per-job dependency installation;
+- `pyyaml==6.0.3` — provides deterministic YAML parsing through the `yaml` module for agent-side artifact validation.
 
 Environment variable contract:
 - during `configure_image`, the service must set `ImageSpec.env["CHROMIUM_EXECUTABLE_PATH"]` to the absolute path of the system Chromium executable (`/usr/bin/chromium-browser`);
@@ -139,14 +140,15 @@ Required Remotion compatibility checks:
 Required Python modules:
 - `PIL`;
 - `pillow_heif`;
-- `requests`.
+- `requests`;
+- `yaml`; `yaml.safe_load("title: test")` must return `{"title": "test"}`.
 
 # Requirements
 - Сервис должен устанавливать все image dependencies через standard image dependency fields, not raw package-manager install commands.
 - Сервис должен использовать `ImageSpec.apk_packages` для системных packages.
 - Сервис должен использовать `ImageSpec.python_packages` для Python packages.
 - Сервис должен устанавливать `ffmpeg` и обеспечивать доступность commands `ffmpeg` and `ffprobe`.
-- Сервис должен предоставлять полный superset image processing tooling: ImageMagick (`magick`, `identify`), WebP tools (`cwebp`, `dwebp`, `gif2webp`), HEIC/HEIF tools (`heif-convert`, `heif-info`), `jpegoptim`, `optipng`, `pngquant`, `file`, system `python3`/`py3-pip` c `pillow`, `pillow-heif` и `requests`.
+- Сервис должен предоставлять полный superset image processing tooling: ImageMagick (`magick`, `identify`), WebP tools (`cwebp`, `dwebp`, `gif2webp`), HEIC/HEIF tools (`heif-convert`, `heif-info`), `jpegoptim`, `optipng`, `pngquant`, `file`, system `python3`/`py3-pip` c `pillow`, `pillow-heif`, `requests` и `pyyaml==6.0.3`.
 - Сервис должен устанавливать Node.js и обеспечивать доступность commands `node`, `npm`, and `npx`.
 - Сервис должен устанавливать headless Chromium с runtime libs (`nss`, `freetype`, `harfbuzz`, `ca-certificates`).
 - Сервис должен устанавливать базовый ttf font set, DejaVu Sans Bold, DejaVu Sans Condensed Bold и emoji font, доступные через `fontconfig`.
@@ -171,8 +173,8 @@ Required Python modules:
 - Сервис должен fail fast during `post_start` if no fonts are visible through `fc-list`.
 - Сервис должен fail fast during `post_start` if `font-dejavu`, either required DejaVu face, either resolved package-owned file, or the bundled upstream license notice is missing or invalid.
 - Сервис должен fail fast during `post_start` if Chromium cannot launch headlessly against a no-network data URL.
-- Сервис должен fail fast during `post_start` if `PIL`, `pillow_heif`, or `requests` cannot be imported by `python3`.
-- Image-level visual tooling должно использовать preinstalled `requests`, `PIL` и `pillow_heif` через system `python3` без per-job `pip install`, temporary virtual environment или dependency download.
+- Сервис должен fail fast during `post_start` if `PIL`, `pillow_heif`, `requests`, or `yaml` cannot be imported by `python3`.
+- Image-level visual tooling должно использовать preinstalled `requests`, `PIL`, `pillow_heif` и `yaml` через system `python3` без per-job `pip install`, temporary virtual environment или dependency download.
 - Image-level visual tooling должно использовать preinstalled DejaVu faces without agent-time `apk add`, font download, or guessed `/usr/share/fonts/truetype/dejavu` paths.
 - Сервис не должен включать GPU/hardware acceleration в контракт: rendering выполняется на CPU.
 - Сервис не должен выполнять video/image conversion, rendering, upload, download, or persistence behavior сам.

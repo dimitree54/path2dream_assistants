@@ -32,7 +32,7 @@ SYSTEM_PACKAGES = [
     "util-linux",
     "gcompat",
 ]
-PYTHON_PACKAGES = ["pillow", "pillow-heif", "requests"]
+PYTHON_PACKAGES = ["pillow", "pillow-heif", "requests", "pyyaml==6.0.3"]
 CHROMIUM_EXECUTABLE_PATH = "/usr/bin/chromium-browser"
 DEJAVU_LICENSE_PATH = "/usr/share/licenses/font-dejavu/LICENSE"
 DEJAVU_LICENSE_SHA256 = "7a083b136e64d064794c3419751e5c7dd10d2f64c108fe5ba161eae5e5958a93"
@@ -111,6 +111,7 @@ def _health_command() -> str:
             "import PIL",
             "import pillow_heif",
             "import requests",
+            "import yaml",
             "PY",
         ]
     )

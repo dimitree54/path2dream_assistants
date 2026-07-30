@@ -137,6 +137,9 @@ def _python_modules_probe_script() -> str:
             "import PIL",
             "import pillow_heif",
             "import requests",
+            "import yaml",
+            "",
+            "assert yaml.safe_load('title: test') == {'title': 'test'}",
             "PY",
             "printf '%s\\n' video-processing-python-modules-probe-ok",
         ]
