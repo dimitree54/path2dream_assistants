@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "path2dream_ai_assistants"
-version = "0.6.22"
+version = "0.6.23"
 description = "Composable Docker-based OpenCode assistant container orchestration for wrapper applications."
 readme = "README.md"
 requires-python = ">=3.11"
