@@ -49,7 +49,7 @@ Runtime-интерфейс не добавляет ничего нового, а
 
 During `configure_container`, the service must finalize `ContainerSpec.working_dir` before registering the OpenCode process and must record OpenCode runtime metadata in `ContainerSpec.state` using the standard OpenCode runtime state key.
 
-During `configure_image`, the service must pin OpenCode `1.17.15` and install the service-owned retry patch. Patch installation must fail if the runtime version or expected compiled-code signatures differ. The patch must be removed when an adopted upstream OpenCode release provides equivalent bounded retry behavior.
+During `configure_image`, the service must pin OpenCode `1.18.10` and install the service-owned retry patch. Patch installation must fail if the runtime version or expected compiled-code signatures differ. The patch must be removed when an adopted upstream OpenCode release provides equivalent bounded retry behavior.
 
 The recorded metadata must contain:
 - `working_dir` — final `ContainerSpec.working_dir`, from which OpenCode is launched;

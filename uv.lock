@@ -165,7 +165,7 @@ wheels = [
 
 [[package]]
 name = "path2dream-ai-assistants"
-version = "0.6.23"
+version = "0.6.24"
 source = { editable = "." }
 dependencies = [
     { name = "docker" },

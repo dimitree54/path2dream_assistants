@@ -4,7 +4,7 @@ import argparse
 import re
 from pathlib import Path
 
-EXPECTED_VERSION = b"1.17.15"
+EXPECTED_VERSION = b"1.18.10"
 CLASSIFIER = re.compile(
     rb"if\(!(?P<error>[A-Za-z_$]+)\.data\.isRetryable&&!\("
     rb"(?P<status>[A-Za-z_$]+)!==void 0&&(?P=status)>=500\)\)return;"
@@ -17,7 +17,7 @@ POLICY = re.compile(
 
 def patch_bytes(binary: bytes, *, max_retries: int) -> bytes:
     if EXPECTED_VERSION not in binary:
-        raise RuntimeError("unsupported OpenCode version; expected 1.17.15")
+        raise RuntimeError("unsupported OpenCode version; expected 1.18.10")
     if not isinstance(max_retries, int) or isinstance(max_retries, bool) or not 0 <= max_retries <= 9:
         raise ValueError("max_retries must be an integer between 0 and 9")
 
@@ -96,7 +96,7 @@ def main() -> None:
     patched = patch_bytes(original, max_retries=args.max_retries)
     args.binary.write_bytes(patched)
     print(
-        "OPENCODE_RETRY_PATCH installed: version=1.17.15 "
+        "OPENCODE_RETRY_PATCH installed: version=1.18.10 "
         f"max_retries={args.max_retries} permanent_4xx=fail transient=bounded"
     )
 

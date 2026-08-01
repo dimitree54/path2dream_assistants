@@ -23,6 +23,11 @@ def test_live_container_retry_patch_fails_permanent_errors_and_bounds_transient_
 
     try:
         builder.build()
+        version = builder._docker_client.containers.run(
+            image_tag,
+            ["opencode", "--version"],
+            remove=True,
+        )
         permanent = builder._docker_client.containers.run(
             image_tag,
             ["/bin/sh", "-lc", _provider_failure_probe(status=404, include_title=True)],
@@ -36,6 +41,7 @@ def test_live_container_retry_patch_fails_permanent_errors_and_bounds_transient_
     finally:
         _remove_image_if_present(image_tag)
 
+    assert version.strip() == b"1.18.10"
     assert b"status=1" in permanent
     assert b"count=2" in permanent
     assert b"status=1" in transient

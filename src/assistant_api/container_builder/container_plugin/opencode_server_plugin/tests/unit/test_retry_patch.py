@@ -14,4 +14,4 @@ def test_patch_rejects_wrong_version() -> None:
 
 def test_patch_rejects_unknown_compiled_shape() -> None:
     with pytest.raises(RuntimeError, match="signature"):
-        patch_bytes(b"1.17.15", max_retries=5)
+        patch_bytes(b"1.18.10", max_retries=5)

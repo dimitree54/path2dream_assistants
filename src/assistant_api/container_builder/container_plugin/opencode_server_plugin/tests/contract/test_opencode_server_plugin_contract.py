@@ -43,7 +43,7 @@ def test_opencode_server_plugin_pins_and_patches_owned_runtime() -> None:
 
     plugin.configure_image(image_spec)
 
-    assert image_spec.base_image == "ghcr.io/anomalyco/opencode:1.17.15"
+    assert image_spec.base_image == "ghcr.io/anomalyco/opencode:1.18.10"
     assert "python3" in image_spec.apk_packages
     install = "\n".join(image_spec.run_commands)
     assert "OPENCODE_RETRY_PATCH" in install

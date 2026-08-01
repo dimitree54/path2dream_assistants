@@ -17,7 +17,7 @@ from assistant_api.models import (
 
 class OpenCodeServerPluginService:
     name = "opencode-server"
-    _opencode_image = "ghcr.io/anomalyco/opencode:1.17.15"
+    _opencode_image = "ghcr.io/anomalyco/opencode:1.18.10"
 
     def __init__(
         self,

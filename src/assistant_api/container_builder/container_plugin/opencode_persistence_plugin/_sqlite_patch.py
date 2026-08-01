@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 
-EXPECTED_VERSION = b"1.17.15"
+EXPECTED_VERSION = b"1.18.10"
 WAL_CLIENT = b'run("PRAGMA journal_mode = WAL;")'
 DELETE_CLIENT = b'run("PRAGMA journal_mode=DELETE")'
 WAL_DATABASE = b'run("PRAGMA journal_mode = WAL"),'
@@ -13,7 +13,7 @@ QUERY_DATABASE = b'run("PRAGMA journal_mode      "),'
 
 def patch_bytes(binary: bytes) -> bytes:
     if EXPECTED_VERSION not in binary:
-        raise RuntimeError("unsupported OpenCode version; expected 1.17.15")
+        raise RuntimeError("unsupported OpenCode version; expected 1.18.10")
     _require_single_signature(binary, WAL_CLIENT, "SQLite client WAL initializer")
     _require_single_signature(binary, WAL_DATABASE, "database WAL initializer")
 
@@ -36,7 +36,7 @@ def main() -> None:
     original = args.binary.read_bytes()
     args.binary.write_bytes(patch_bytes(original))
     print(
-        "OPENCODE_SQLITE_PATCH installed: version=1.17.15 "
+        "OPENCODE_SQLITE_PATCH installed: version=1.18.10 "
         "host_history_journal=delete wal=disabled"
     )
 

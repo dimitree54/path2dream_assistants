@@ -22,7 +22,7 @@ RETRY_SHAPE = (
 
 
 def _binary() -> bytes:
-    return b"1.17.15 " + WAL_CLIENT + b" " + WAL_DATABASE + b" " + RETRY_SHAPE
+    return b"1.18.10 " + WAL_CLIENT + b" " + WAL_DATABASE + b" " + RETRY_SHAPE
 
 
 def test_patch_replaces_both_wal_setters_with_delete_mode_and_query() -> None:
@@ -37,7 +37,7 @@ def test_patch_replaces_both_wal_setters_with_delete_mode_and_query() -> None:
 
 def test_patch_rejects_wrong_version() -> None:
     with pytest.raises(RuntimeError, match="version"):
-        patch_bytes(_binary().replace(b"1.17.15", b"1.17.14"))
+        patch_bytes(_binary().replace(b"1.18.10", b"1.18.9"))
 
 
 @pytest.mark.parametrize("missing", [WAL_CLIENT, WAL_DATABASE])
