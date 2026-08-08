@@ -8,6 +8,9 @@ from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin.openai_provider_login_plugin._auth_server import (
     OpenAIProviderLoginError,
 )
+from assistant_api.container_builder.container_plugin.openai_provider_login_plugin import (
+    _credential_validator,
+)
 from openai_provider_login_contract_helpers import (
     OpenCodeRuntimeStatePlugin,
     VALID_STATUS_STATES,
@@ -154,6 +157,32 @@ def test_status_reports_authenticated_when_openai_oauth_credentials_exist(
     assert "oauth" in status["message"]
     assert opencode_provider_stub.state.provider_requests >= 1
     assert all(opencode_provider_stub.state.provider_request_auth_present)
+
+
+def test_status_revalidates_cached_credentials_after_their_expiry(
+    openai_provider_env: OpenAIProviderEnv,
+    opencode_provider_stub: OpenCodeProviderStub,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_home = tmp_path / "share"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    write_openai_oauth_auth(data_home)
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
+    start_plugin(plugin, container_spec.state)
+    assert status_json(port=openai_provider_env.openai_auth_port)["authValid"] is True
+    assert len(opencode_provider_stub.state.message_requests) == 1
+
+    opencode_provider_stub.state.provider_auth_rejected = True
+    monkeypatch.setattr(_credential_validator, "_current_time_ms", lambda: 10**18)
+    status = status_json(port=openai_provider_env.openai_auth_port)
+
+    assert status["authValid"] is False
+    assert status["state"] == "unauthenticated"
+    assert len(opencode_provider_stub.state.message_requests) == 2
 
 
 def test_status_fails_fast_when_authenticated_provider_payload_has_no_openai(

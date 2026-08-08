@@ -28,11 +28,15 @@ class OpenCodeProviderState:
     authorize_failure: bool = False
     callback_failure: bool = False
     callback_connects_auth: bool = True
+    provider_auth_rejected: bool = False
     provider_requests: int = 0
     provider_request_auth_present: list[bool] = field(default_factory=list)
     auth_requests: int = 0
     authorize_requests: list[dict[str, Any]] = field(default_factory=list)
     callback_requests: list[dict[str, Any]] = field(default_factory=list)
+    session_requests: list[dict[str, Any]] = field(default_factory=list)
+    message_requests: list[dict[str, Any]] = field(default_factory=list)
+    deleted_sessions: list[str] = field(default_factory=list)
     authorization_url: str = "https://auth.openai.com/codex/device"
     instructions: str = "Enter code: OPENAI-CONTRACT-CODE"
 
@@ -121,6 +125,27 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
             if state.unavailable:
                 self._send_json(503, {"error": "opencode unavailable"})
                 return
+            if parsed.path == "/session":
+                state.session_requests.append(payload)
+                self._send_json(200, {"id": "session_contract_probe"})
+                return
+            if parsed.path == "/session/session_contract_probe/message":
+                state.message_requests.append(payload)
+                error = None
+                if state.provider_auth_rejected:
+                    error = {
+                        "name": "APIError",
+                        "data": {
+                            "message": "Provided authentication token is expired.",
+                            "statusCode": 401,
+                            "isRetryable": False,
+                        },
+                    }
+                self._send_json(
+                    200,
+                    {"info": {"role": "assistant", "error": error}, "parts": []},
+                )
+                return
             if parsed.path == "/provider/openai/oauth/authorize":
                 state.authorize_requests.append(payload)
                 if state.authorize_failure:
@@ -150,6 +175,19 @@ def _make_handler() -> type[BaseHTTPRequestHandler]:
                     self._send_json(200, True)
                 else:
                     self._send_json(200, False)
+                return
+            self._send_json(404, {"error": "not found"})
+
+        def do_DELETE(self) -> None:
+            state: OpenCodeProviderState = self.server.state  # type: ignore[attr-defined]
+            parsed = urllib.parse.urlparse(self.path)
+            if state.unavailable:
+                self._send_json(503, {"error": "opencode unavailable"})
+                return
+            prefix = "/session/"
+            if parsed.path.startswith(prefix):
+                state.deleted_sessions.append(parsed.path.removeprefix(prefix))
+                self._send_json(200, True)
                 return
             self._send_json(404, {"error": "not found"})
 

@@ -175,6 +175,55 @@ def test_automatic_headless_callback_completion_reports_authenticated(
     assert config["model"] == "openai/gpt-5.5-fast"
 
 
+def test_expired_oauth_credentials_start_reauthorization_and_recover(
+    openai_provider_env: OpenAIProviderEnv,
+    opencode_provider_stub: OpenCodeProviderStub,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_home = tmp_path / "share"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    write_openai_oauth_auth(data_home)
+    opencode_provider_stub.state.connected = True
+    opencode_provider_stub.state.provider_auth_rejected = True
+    plugin = service_class()(host_port=openai_provider_env.openai_auth_port)
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[OpenCodeRuntimeStatePlugin(openai_provider_env.opencode_api_port), plugin]
+    )._prepare_specs()
+    start_plugin(plugin, container_spec.state)
+
+    rejected_status = status_json(port=openai_provider_env.openai_auth_port)
+    login = read_url(service_url("/login", port=openai_provider_env.openai_auth_port))
+
+    assert rejected_status["authValid"] is False
+    assert rejected_status["state"] == "unauthenticated"
+    assert opencode_provider_stub.state.authorize_requests == [{"method": 1}]
+    assert opencode_provider_stub.state.message_requests == [
+        {
+            "model": {"providerID": "openai", "modelID": "gpt-5.5"},
+            "tools": {},
+            "parts": [{"type": "text", "text": "Reply exactly OK."}],
+        }
+    ]
+    assert opencode_provider_stub.state.deleted_sessions == ["session_contract_probe"]
+    assert "Open OpenAI authorization" in login.text
+
+    opencode_provider_stub.state.provider_auth_rejected = False
+    completion = read_url(
+        service_url("/login?complete=1", port=openai_provider_env.openai_auth_port)
+    )
+    recovered_status = status_json(port=openai_provider_env.openai_auth_port)
+
+    assert completion.status == 200
+    assert recovered_status["authValid"] is True
+    assert recovered_status["state"] == "authenticated"
+    assert len(opencode_provider_stub.state.message_requests) == 2
+    assert opencode_provider_stub.state.deleted_sessions == [
+        "session_contract_probe",
+        "session_contract_probe",
+    ]
+
+
 def _style_block(page_html: str) -> str:
     return page_html.split("<style>\n", 1)[1].split("\n  </style>", 1)[0]
 

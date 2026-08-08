@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 if __package__:
+    from ._credential_validator import OpenAICredentialValidator
     from ._login_page import render_login_page
     from ._opencode_config import (
         OpenCodeConfigError,
@@ -19,6 +20,7 @@ if __package__:
         validate_openai_opencode_model,
     )
 else:
+    from _credential_validator import OpenAICredentialValidator
     from _login_page import render_login_page
     from _opencode_config import (  # type: ignore[no-redef]
         OpenCodeConfigError,
@@ -60,6 +62,9 @@ class OpenAIProviderAuthServer:
         self._auth_valid = False
         self._pending_authorize: dict[str, Any] | None = None
         self._callback_lock = threading.Lock()
+        self._credential_validator = OpenAICredentialValidator(
+            self.opencode_model, self._request_json
+        )
 
     def start_in_thread(self, bind_host: str) -> None:
         self._validate_startup()
@@ -157,18 +162,24 @@ class OpenAIProviderAuthServer:
 
     def _status_payload(self) -> dict[str, Any]:
         self._request_json("GET", "/global/health", "OpenCode server is unavailable")
-        auth_method = _openai_auth_method()
-        self._auth_valid = auth_method is not None
-        if self._auth_valid:
+        auth_record = _openai_auth_record()
+        auth_method = auth_record.get("type") if auth_record is not None else None
+        self._auth_valid = auth_record is not None
+        if auth_record is not None:
             provider_payload = self._request_json(
                 "GET", "/provider", "OpenCode provider status is unavailable"
             )
             provider = self._find_openai_provider(provider_payload)
             provider_name = provider.get("name")
             self.provider_name = provider_name if isinstance(provider_name, str) else PROVIDER_NAME
-            self._state = "authenticated"
-            self._message = f"OpenAI provider is authenticated through OpenCode {auth_method} credentials."
-            self._pending_authorize = None
+            self._auth_valid = self._credential_validator.validate(auth_record)
+            if self._auth_valid:
+                self._state = "authenticated"
+                self._message = f"OpenAI provider is authenticated through OpenCode {auth_method} credentials."
+                self._pending_authorize = None
+            else:
+                self._state = "unauthenticated"
+                self._message = "OpenAI provider rejected the stored OAuth credentials."
         elif self._state != "error":
             self._state = "unauthenticated"
             if self._pending_authorize is None:
@@ -297,7 +308,7 @@ def required_port_env(name: str) -> int:
     return port
 
 
-def _openai_auth_method() -> str | None:
+def _openai_auth_record() -> dict[str, Any] | None:
     auth_info = _opencode_auth_records().get(PROVIDER_ID)
     if auth_info is None:
         return None
@@ -310,7 +321,7 @@ def _openai_auth_method() -> str | None:
             and _non_empty_string(auth_info.get("access"))
             and isinstance(auth_info.get("expires"), int | float)
         ):
-            return "oauth"
+            return auth_info
         raise OpenAIProviderLoginError("OpenCode OpenAI OAuth credentials are incomplete")
     raise OpenAIProviderLoginError("OpenCode OpenAI auth credentials have unsupported type")
 

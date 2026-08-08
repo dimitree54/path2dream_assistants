@@ -21,6 +21,7 @@ from ._opencode_config import OpenCodeConfigError, validate_openai_opencode_mode
 AUTH_SERVER_PATH = "/opt/notes-assistant-api/openai_provider_auth_server.py"
 OPENCODE_CONFIG_PATH = "/opt/notes-assistant-api/_opencode_config.py"
 LOGIN_PAGE_PATH = "/opt/notes-assistant-api/_login_page.py"
+CREDENTIAL_VALIDATOR_PATH = "/opt/notes-assistant-api/_credential_validator.py"
 LOGO_ASSET_PATH = f"/opt/notes-assistant-api/assets/{LOGO_ASSET_NAME}"
 SHARED_STYLE_ASSET_PATH = f"/opt/notes-assistant-api/assets/{SHARED_STYLE_ASSET_NAME}"
 DEFAULT_OPENCODE_MODEL = "openai/gpt-5.5"
@@ -126,6 +127,9 @@ def _install_auth_server_commands() -> list[str]:
         AUTH_SERVER_PATH: module_dir.joinpath("_auth_server.py").read_bytes(),
         OPENCODE_CONFIG_PATH: module_dir.joinpath("_opencode_config.py").read_bytes(),
         LOGIN_PAGE_PATH: module_dir.joinpath("_login_page.py").read_bytes(),
+        CREDENTIAL_VALIDATOR_PATH: module_dir.joinpath(
+            "_credential_validator.py"
+        ).read_bytes(),
         LOGO_ASSET_PATH: module_dir.joinpath("assets", LOGO_ASSET_NAME).read_bytes(),
         SHARED_STYLE_ASSET_PATH: module_dir.parent.joinpath(
             "assets", SHARED_STYLE_ASSET_NAME

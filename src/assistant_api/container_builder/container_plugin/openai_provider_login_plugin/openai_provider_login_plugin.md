@@ -72,6 +72,7 @@ OpenCode provider endpoints used by this service:
 - `GET /global/health`;
 - `GET /provider/auth`;
 - `GET /provider`, only after OpenCode auth storage contains real OpenAI credentials;
+- `POST /session`, `POST /session/{session_id}/message`, and `DELETE /session/{session_id}` for a disposable provider-backed credential probe;
 - `POST /provider/{provider_id}/oauth/authorize`;
 - `POST /provider/{provider_id}/oauth/callback`.
 
@@ -104,7 +105,11 @@ OpenCode provider endpoints used by this service:
 - On status check, it must check OpenCode auth storage for real OpenAI credentials before calling OpenCode `/provider`.
 - When OpenCode auth storage does not contain real OpenAI credentials, `/status` must report unauthenticated without calling OpenCode `/provider`.
 - When OpenCode auth storage contains real OpenAI credentials, `/status` should use OpenCode `/provider` to check that the OpenAI provider is available.
-- `/status.authValid=true` must require valid OpenCode `openai` auth credentials in `~/.local/share/opencode/auth.json` or equivalent OpenCode auth content. OpenCode `/provider.connected` alone must not be treated as successful auth.
+- `/status.authValid=true` must require both complete OpenCode `openai` OAuth credentials in `~/.local/share/opencode/auth.json` or equivalent OpenCode auth content and a successful minimal provider-backed request through the local OpenCode API. OpenCode `/provider.connected` or a well-formed auth record alone must not be treated as successful auth.
+- The provider-backed credential probe must use a disposable OpenCode session, the configured `opencode_model`, no tools, and must delete the session after the probe.
+- A successful credential probe may be cached only for the exact OAuth credential record and only until that record's expiry. A rejected credential result may be cached only for the exact OAuth credential record. A changed credential record must be probed again.
+- Structured OpenCode provider authentication failures with HTTP status `401` or `403` must make `/status` report `authValid=false` and `state=unauthenticated`, so `/login` starts a new headless OAuth flow. Other provider or OpenCode failures must not be silently treated as unauthenticated.
+- Successful OAuth callback completion must not report authenticated until the newly stored credentials pass the provider-backed probe.
 - Provider auth must be checked against the local OpenCode API URL derived from OpenCode runtime metadata.
 - The service must accept the OpenAI model name for OpenCode through init-time configuration as `opencode_model`.
 - The default `opencode_model` must be `openai/gpt-5.5`.
