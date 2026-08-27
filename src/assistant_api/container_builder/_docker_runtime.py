@@ -18,7 +18,7 @@ from ._dockerfile import render_dockerfile
 
 
 DEFAULT_COMMAND = ["sleep", "infinity"]
-STARTUP_TASK_STATUS_DIR = "/tmp/notes-assistant/startup-tasks"
+STARTUP_TASK_STATUS_DIR = "/tmp/notes-assistant-startup-tasks"
 
 
 @dataclass(slots=True)
@@ -53,9 +53,15 @@ def image_exists(docker_client: Any, image_tag: str) -> bool:
 
 
 def run_container(docker_client: Any, container_spec: ContainerSpec) -> Any:
+    command = container_command(container_spec)
+    user = None
+    if container_spec.execution_identity is not None:
+        command = container_spec.execution_identity.wrap_command(command)
+        user = container_spec.execution_identity.docker_user
     return docker_client.containers.run(
         container_spec.image_tag,
-        command=container_command(container_spec),
+        command=command,
+        user=user,
         name=container_spec.name,
         detach=True,
         environment=container_spec.env,

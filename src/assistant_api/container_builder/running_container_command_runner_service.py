@@ -77,13 +77,16 @@ class RunningContainerCommandRunnerService:
             )
 
     def _create_exec(self, command: list[str], workdir: str | None) -> str:
+        identity = self.running_container.container_spec.execution_identity
+        exec_command = identity.wrap_command(command) if identity else command
         try:
             response = self._docker_api().exec_create(
                 self.running_container.id,
-                command,
+                exec_command,
                 stdout=True,
                 stderr=True,
                 workdir=workdir,
+                **({"user": identity.docker_user} if identity else {}),
             )
         except Exception as error:
             raise ContainerCommandError("Container command failed to start") from error
@@ -196,7 +199,11 @@ class RunningContainerCommandRunnerService:
         for target in (f"-{pid}", str(pid)):
             command = ["kill", f"-{signal_name}", target]
             try:
-                result = self.running_container.container.exec_run(command)
+                identity = self.running_container.container_spec.execution_identity
+                result = self.running_container.container.exec_run(
+                    command,
+                    **({"user": identity.docker_user} if identity else {}),
+                )
             except Exception as error:
                 details.append(f"{' '.join(command)} failed: {error}")
                 continue

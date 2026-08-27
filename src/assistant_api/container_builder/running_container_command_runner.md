@@ -63,6 +63,8 @@ class RunningContainerCommandRunnerService:
 - If `working_dir` is provided, it must be an absolute `PurePosixPath`.
 - If Docker rejects the requested `working_dir`, the service must fail fast with `ContainerCommandError`.
 - The command vector must be passed to Docker exec without shell interpolation by default.
+- When `RunningContainer.container_spec` contains an execution identity, Docker exec must use its exact UID/GID and apply its umask through an argv-safe wrapper before the requested command starts.
+- Execution identity must also apply to timeout TERM/KILL helper execs; ordinary command execution and cleanup must not regain root.
 - Stdout and stderr must be captured as combined text in `CommandExecResult.output`.
 - Nonzero command exits must return `CommandExecResult` with the original exit code.
 - Docker exec startup failures must raise `ContainerCommandError`.

@@ -9,7 +9,7 @@ import pytest
 
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
-from assistant_api.models import ContainerRuntimeContext
+from assistant_api.models import ContainerExecutionIdentity, ContainerRuntimeContext
 from command_monitor_contract_helpers import RecordingContainer, service_class
 
 
@@ -25,7 +25,7 @@ def test_public_service_import_and_init_signature() -> None:
     signature = inspect.signature(service)
 
     assert service.__name__ == "CommandMonitorPluginService"
-    assert list(signature.parameters) == ["log_volume"]
+    assert list(signature.parameters) == ["log_volume", "log_host_dir"]
 
 
 def test_plugin_name() -> None:
@@ -34,10 +34,20 @@ def test_plugin_name() -> None:
     assert plugin.name == "command-monitor"
 
 
-@pytest.mark.parametrize("log_volume", ["", "   ", " padded ", 123, None])
+@pytest.mark.parametrize("log_volume", ["", "   ", " padded ", 123])
 def test_init_rejects_invalid_log_volume(log_volume: object) -> None:
     with pytest.raises(ConfigurationError, match="log_volume"):
         service_class()(log_volume=log_volume)
+
+
+def test_init_requires_exactly_one_persistence_source(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="exactly one"):
+        service_class()()
+    with pytest.raises(ConfigurationError, match="exactly one"):
+        service_class()(log_volume=LOG_VOLUME, log_host_dir=tmp_path)
+    for invalid in ("", " padded ", 123):
+        with pytest.raises(ConfigurationError, match="log_host_dir"):
+            service_class()(log_host_dir=invalid)
 
 
 def test_configure_image_declares_python3_and_embeds_plugin_source() -> None:
@@ -106,6 +116,28 @@ def test_configure_container_mounts_log_volume() -> None:
     assert mount.target == PurePosixPath(LOG_DIR)
     assert mount.type == "volume"
     assert mount.mode == "rw"
+
+
+def test_execution_identity_requires_compatible_host_log_directory(tmp_path: Path) -> None:
+    identity = ContainerExecutionIdentity(
+        uid=tmp_path.stat().st_uid,
+        gid=tmp_path.stat().st_gid,
+        umask=0o022,
+    )
+    _image_spec, container_spec = ContainerBuilderService(
+        plugins=[service_class()(log_host_dir=tmp_path)],
+        execution_identity=identity,
+    )._prepare_specs()
+
+    mount = container_spec.volumes[str(tmp_path)]
+    assert mount.type == "bind"
+    assert mount.target == PurePosixPath(LOG_DIR)
+
+    with pytest.raises(ConfigurationError, match="log_host_dir"):
+        ContainerBuilderService(
+            plugins=[service_class()(log_volume=LOG_VOLUME)],
+            execution_identity=identity,
+        )._prepare_specs()
 
 
 def test_configure_container_registers_install_startup_task() -> None:

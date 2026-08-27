@@ -51,6 +51,14 @@ Shared runtime-модели этого интерфейса находятся �
 - startup task — одноразовая команда, которая должна завершиться успешно до запуска long-running processes;
 - managed process — long-running process, которым управляет container entrypoint;
 - Docker runtime capabilities — минимальные Docker options, нужные plugin для запуска container, включая devices, `cap_add`, security options, `mem_limit`, `shm_size` и `restart_policy`.
+- execution identity — optional shared `ContainerExecutionIdentity` with one non-root numeric UID, primary GID, and explicit umask for container creation and exec.
+
+Стандартное правило execution identity:
+- plugin должен использовать `ContainerSpec.require_execution_identity(...)`, если ему нужна execution identity;
+- повторный запрос той же identity разрешён;
+- конфликтующие contributions должны fail fast до image build или container start;
+- plugin с writable bind mount должен до container work проверить, что caller заранее создал directory с точным UID/GID и write permission для выбранной identity;
+- plugin не должен исправлять ownership или permissions и не должен добавлять root fallback.
 
 Стандартное правило image dependencies:
 - plugin должен объявлять системные пакеты через `ImageSpec.apk_packages`;

@@ -38,6 +38,12 @@ class LocalDirMountPluginService:
         return None
 
     def configure_container(self, container: ContainerSpec) -> None:
+        if container.execution_identity is not None and self.mode != "ro":
+            error = container.execution_identity.writable_directory_error(self.host_path)
+            if error:
+                raise ConfigurationError(
+                    f"local bind ownership or writability is incompatible: {error}"
+                )
         source_key = str(self.host_path)
         container.volumes[source_key] = VolumeMount(
             source=source_key,

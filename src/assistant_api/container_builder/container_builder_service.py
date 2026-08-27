@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 import shlex
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 from assistant_api.container_builder.container_plugin import ContainerPluginService
 from assistant_api.models import (
     CommandExecResult,
+    ContainerExecutionIdentity,
     ContainerStartupTask,
     ContainerRuntimeContext,
     ContainerSpec,
@@ -18,6 +18,8 @@ from assistant_api.models import (
 )
 
 from ._errors import ConfigurationError
+from ._execution_identity import validate_execution_identity_mounts
+from ._plugin_lifecycle import PluginLifecycle
 from ._docker_runtime import (
     build_image,
     ensure_named_volumes,
@@ -36,48 +38,6 @@ STARTUP_TASK_POLL_SECONDS = 0.5
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class _PluginHook:
-    plugin_index: int
-    plugin_name: str
-    stage: str
-
-
-class _PluginLifecycle:
-    def __init__(self) -> None:
-        self.started: list[_PluginHook] = []
-        self.finished: list[_PluginHook] = []
-
-    def run(
-        self,
-        plugin_index: int,
-        plugin: ContainerPluginService,
-        stage: str,
-        hook: Callable[[], None],
-    ) -> None:
-        plugin_hook = _PluginHook(plugin_index, plugin.name, stage)
-        LOGGER.info("Starting plugin hook: plugin=%s stage=%s", plugin.name, stage)
-        self.started.append(plugin_hook)
-        try:
-            hook()
-        except ConfigurationError:
-            raise
-        except Exception as error:
-            raise RuntimeError(
-                f"Plugin hook failed: plugin={plugin.name} stage={stage}"
-            ) from error
-        self.finished.append(plugin_hook)
-
-    def validate_finished(self) -> None:
-        if self.started == self.finished:
-            return
-        missing = [hook for hook in self.started if hook not in self.finished]
-        details = ", ".join(
-            f"plugin={hook.plugin_name} stage={hook.stage}" for hook in missing
-        )
-        raise RuntimeError(f"Plugin hooks did not finish successfully: {details}")
-
-
 class ContainerBuilderService:
     def __init__(
         self,
@@ -86,21 +46,29 @@ class ContainerBuilderService:
         *,
         image_tag: str = DEFAULT_IMAGE_TAG,
         build_policy: BuildPolicy = "always",
+        execution_identity: ContainerExecutionIdentity | None = None,
     ) -> None:
         self.plugins = plugins
         self.container_name = container_name
         self.image_tag = image_tag
         self.build_policy = _validate_build_policy(build_policy)
+        if execution_identity is not None and not isinstance(
+            execution_identity, ContainerExecutionIdentity
+        ):
+            raise ConfigurationError(
+                "execution_identity must be a ContainerExecutionIdentity"
+            )
+        self.execution_identity = execution_identity
         self._docker_client: Any | None = None
 
     def build(self) -> None:
-        lifecycle = _PluginLifecycle()
+        lifecycle = PluginLifecycle()
         image_spec, _container_spec = self._prepare_specs(lifecycle)
         lifecycle.validate_finished()
         self._resolve_image(self._client(), image_spec)
 
     def build_and_run(self) -> RunningContainer:
-        lifecycle = _PluginLifecycle()
+        lifecycle = PluginLifecycle()
         image_spec, container_spec = self._prepare_specs(lifecycle)
         lifecycle.validate_finished()
         self._resolve_image(self._client(), image_spec)
@@ -109,7 +77,7 @@ class ContainerBuilderService:
     def _run_started_container(
         self,
         container_spec: ContainerSpec,
-        lifecycle: _PluginLifecycle,
+        lifecycle: PluginLifecycle,
     ) -> RunningContainer:
         docker_client = self._client()
         self._replace_container_if_needed(docker_client, container_spec.name)
@@ -120,6 +88,7 @@ class ContainerBuilderService:
             docker_client=docker_client,
             container=container,
             state=container_spec.state,
+            execution_identity=container_spec.execution_identity,
         )
         self._wait_for_startup_tasks(container, container_spec.startup_tasks)
         for index, plugin in enumerate(self.plugins):
@@ -142,14 +111,15 @@ class ContainerBuilderService:
 
     def _prepare_specs(
         self,
-        lifecycle: _PluginLifecycle | None = None,
+        lifecycle: PluginLifecycle | None = None,
     ) -> tuple[ImageSpec, ContainerSpec]:
         if lifecycle is None:
-            lifecycle = _PluginLifecycle()
+            lifecycle = PluginLifecycle()
         image_spec = ImageSpec(run_commands=["mkdir -p /workspace"])
         container_spec = ContainerSpec(
             name=self.container_name,
             image_tag=self.image_tag,
+            execution_identity=self.execution_identity,
         )
 
         for index, plugin in enumerate(self.plugins):
@@ -161,18 +131,38 @@ class ContainerBuilderService:
             )
         for index, plugin in enumerate(self.plugins):
             task_count_before = len(container_spec.startup_tasks)
+            identity_before = container_spec.execution_identity
             lifecycle.run(
                 index,
                 plugin,
                 "configure_container",
                 lambda plugin=plugin: plugin.configure_container(container_spec),
             )
+            identity_after = container_spec.execution_identity
+            if identity_after is not None and not isinstance(
+                identity_after, ContainerExecutionIdentity
+            ):
+                raise ConfigurationError(
+                    "plugin contributed an invalid container execution identity"
+                )
+            if identity_after != identity_before:
+                if identity_before is not None:
+                    raise ConfigurationError(
+                        "conflicting container execution identity contributions"
+                    )
+                if identity_after is not None:
+                    container_spec.require_execution_identity(identity_after)
             self._assign_startup_task_owners(
                 container_spec,
                 task_count_before,
                 plugin.name,
             )
+            if len(container_spec.execution_identity_requirements()) > 1:
+                raise ConfigurationError(
+                    "conflicting container execution identity contributions"
+                )
         lifecycle.validate_finished()
+        validate_execution_identity_mounts(container_spec)
 
         return image_spec, container_spec
 

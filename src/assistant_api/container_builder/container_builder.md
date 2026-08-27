@@ -29,9 +29,14 @@ tags:
 ```python
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder.container_plugin import ContainerPluginService
+from assistant_api.models import ContainerExecutionIdentity
 
 plugins: list[ContainerPluginService] = [...]
-builder = ContainerBuilderService(plugins=plugins, container_name="notes-assistant-opencode")
+builder = ContainerBuilderService(
+    plugins=plugins,
+    container_name="notes-assistant-opencode",
+    execution_identity=ContainerExecutionIdentity(uid=10001, gid=10001, umask=0o022),
+)
 
 container = builder.build_and_run()
 ```
@@ -46,6 +51,7 @@ class ContainerBuilderService:
         *,
         image_tag: str = "notes-assistant-opencode:latest",
         build_policy: Literal["always", "if_missing", "never"] = "always",
+        execution_identity: ContainerExecutionIdentity | None = None,
     ) -> None:
         pass
 ```
@@ -84,6 +90,11 @@ class ContainerBuilderService:
 - Managed long-running processes registered by plugins must be started by the container entrypoint.
 - A raw `ContainerSpec.command` and managed long-running processes must not conflict silently.
 - Docker runtime capabilities requested by plugins, including devices, `cap_add`, security options, `mem_limit`, `shm_size`, and `restart_policy`, must be passed to Docker SDK when the container starts.
+- When `execution_identity` is provided, its non-root numeric UID, primary GID, and explicit umask must apply before every startup task or main-process write.
+- The selected execution identity must be preserved by `ContainerRuntimeContext.exec` and `RunningContainerCommandRunnerService` commands, including timeout termination commands.
+- Plugins may contribute the same execution identity through `ContainerSpec`; conflicting identity contributions must fail before image build or container work instead of using plugin order as last-writer-wins behavior.
+- Writable bind directories used with an execution identity must already exist and be owned and writable by that exact UID and primary GID. The builder and plugins must not create, chown, recursively normalize, or broaden permissions on caller-owned bind directories.
+- Writable named volumes must fail before container work when execution identity is selected; callers must use explicit compatible bind directories. Read-only mounts remain allowed.
 - Post-start hooks must run after Docker reports the container as started.
 - `build_and_run()` must validate that all plugin hooks finished successfully before returning `RunningContainer`.
 - Any plugin hook failure must fail fast with an explicit error and must prevent `build_and_run()` from returning a successful result.

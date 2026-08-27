@@ -15,6 +15,7 @@ from assistant_api.container_builder._docker_runtime import (
 from assistant_api.container_builder._dockerfile import render_dockerfile
 from assistant_api.models import (
     ContainerManagedProcess,
+    ContainerExecutionIdentity,
     ContainerSpec,
     ContainerStartupTask,
     ImageSpec,
@@ -98,6 +99,33 @@ def test_run_container_passes_runtime_capabilities_to_docker_sdk() -> None:
     assert calls[0]["devices"] == ["/dev/fuse"]
     assert calls[0]["cap_add"] == ["SYS_ADMIN"]
     assert calls[0]["security_opt"] == ["apparmor:unconfined"]
+
+
+def test_run_container_applies_execution_user_and_umask_before_command() -> None:
+    calls = []
+
+    class _Containers:
+        def run(self, *_args: Any, **kwargs: Any) -> object:
+            calls.append(kwargs)
+            return object()
+
+    class _DockerClient:
+        containers = _Containers()
+
+    run_container(
+        _DockerClient(),
+        ContainerSpec(
+            name="container-name",
+            image_tag="image-tag",
+            command=["printf", "%s", "literal $VALUE"],
+            execution_identity=ContainerExecutionIdentity(10001, 10001, 0o027),
+        ),
+    )
+
+    assert calls[0]["user"] == "10001:10001"
+    assert calls[0]["command"][-3:] == ["printf", "%s", "literal $VALUE"]
+    assert "umask" in calls[0]["command"][2]
+    assert "0027" in calls[0]["command"]
 
 
 def test_run_container_passes_mem_limit_to_docker_sdk() -> None:

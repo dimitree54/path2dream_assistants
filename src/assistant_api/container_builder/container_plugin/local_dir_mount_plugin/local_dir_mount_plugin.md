@@ -56,6 +56,8 @@ During `post_start`, the service must verify inside the container that `containe
 - `workspace_subdir_name` and `container_path` are mutually exclusive.
 - The service must record `MountMetadata` so mount-aware plugins can use it.
 - The service must fail fast if the mounted directory is not usable inside the container.
+- When container execution identity is selected and the mount is writable, the host directory must already exist, have that exact UID and primary GID, and be writable by that identity; incompatibility must fail during spec preparation before container work.
+- The service must not create, chown, chmod, or recursively normalize the caller-owned host directory.
 - The service must not imply that OpenCode runs from the mounted directory.
 - The service must not expose any port.
 - The service must not configure OpenCode persistence.

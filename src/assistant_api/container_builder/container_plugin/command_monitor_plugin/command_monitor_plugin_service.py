@@ -22,18 +22,53 @@ FAILED_COMMANDS_LOG_FILE = LOG_DIR / "failed-commands.jsonl"
 class CommandMonitorPluginService:
     name = "command-monitor"
 
-    def __init__(self, log_volume: str) -> None:
-        self.log_volume = _validate_log_volume(log_volume)
+    def __init__(
+        self,
+        log_volume: str | None = None,
+        *,
+        log_host_dir: str | Path | None = None,
+    ) -> None:
+        if (log_volume is None) == (log_host_dir is None):
+            raise ConfigurationError(
+                "exactly one of log_volume and log_host_dir is required"
+            )
+        self.log_volume = (
+            _validate_log_volume(log_volume) if log_volume is not None else None
+        )
+        self.log_host_dir = (
+            _validate_log_host_dir(log_host_dir)
+            if log_host_dir is not None
+            else None
+        )
 
     def configure_image(self, image: ImageSpec) -> None:
         image.apk_packages.append("python3")
         image.run_commands.extend(_install_plugin_source_commands())
 
     def configure_container(self, container: ContainerSpec) -> None:
-        container.volumes[self.log_volume] = VolumeMount(
-            source=self.log_volume,
+        if container.execution_identity is not None and self.log_host_dir is None:
+            raise ConfigurationError(
+                "log_host_dir is required with container execution identity"
+            )
+        if self.log_host_dir is not None:
+            source = str(self.log_host_dir)
+            mount_type = "bind"
+            if container.execution_identity is not None:
+                error = container.execution_identity.writable_directory_error(
+                    self.log_host_dir
+                )
+                if error:
+                    raise ConfigurationError(
+                        f"log_host_dir ownership or writability is incompatible: {error}"
+                    )
+        else:
+            source = self.log_volume
+            mount_type = "volume"
+        assert source is not None
+        container.volumes[source] = VolumeMount(
+            source=source,
             target=LOG_DIR,
-            type="volume",
+            type=mount_type,
         )
         container.startup_tasks.append(
             ContainerStartupTask(
@@ -56,6 +91,14 @@ def _validate_log_volume(value: object) -> str:
     return value
 
 
+def _validate_log_host_dir(value: object) -> Path:
+    if not isinstance(value, str | Path):
+        raise ConfigurationError("log_host_dir must be a filesystem path")
+    if isinstance(value, str) and (not value.strip() or value != value.strip()):
+        raise ConfigurationError("log_host_dir must be a non-empty filesystem path")
+    return Path(value).expanduser().resolve()
+
+
 def _install_command() -> str:
     return "\n".join(
         [
@@ -69,7 +112,12 @@ def _install_command() -> str:
             f'test -r "$plugins_dir/{OPENCODE_PLUGIN_FILE_NAME}"',
             f"mkdir -p {LOG_DIR}",
             f"test -d {LOG_DIR}",
-            f"test -w {LOG_DIR}",
+            f'probe="{LOG_DIR}/.notes-assistant-command-monitor-startup-$$"',
+            'trap \'rm -f "$probe"\' EXIT INT TERM',
+            'printf "%s" ok > "$probe"',
+            'test "$(cat "$probe")" = ok',
+            'rm -f "$probe"',
+            "trap - EXIT INT TERM",
         ]
     )
 

@@ -13,7 +13,12 @@ from assistant_api.container_builder import (
     ContainerCommandTimeoutError,
     RunningContainerCommandRunnerService,
 )
-from assistant_api.models import CommandExecResult, ContainerSpec, RunningContainer
+from assistant_api.models import (
+    CommandExecResult,
+    ContainerExecutionIdentity,
+    ContainerSpec,
+    RunningContainer,
+)
 
 
 def test_public_interface_is_exported_with_expected_signature() -> None:
@@ -73,6 +78,22 @@ def test_nonzero_exit_returns_result_without_hiding_status() -> None:
 
     assert result.exit_code == 17
     assert result.output == "command failed\n"
+
+
+def test_command_and_timeout_cleanup_preserve_execution_identity_and_argv() -> None:
+    identity = ContainerExecutionIdentity(uid=10001, gid=10001, umask=0o027)
+    scenario = _ExecScenario(exit_code=0, block_until_killed=True)
+    running, api, container = _running_container([scenario], execution_identity=identity)
+    runner = RunningContainerCommandRunnerService(running)
+
+    with pytest.raises(ContainerCommandTimeoutError):
+        runner.run_command(["printf", "%s", "literal $VALUE"], timeout_seconds=1)
+
+    create = api.create_calls[0]
+    assert create["user"] == "10001:10001"
+    assert create["command"][-3:] == ["printf", "%s", "literal $VALUE"]
+    assert "0027" in create["command"]
+    assert container.kill_users == ["10001:10001"]
 
 
 def test_missing_working_directory_fails_fast_as_command_error() -> None:
@@ -146,12 +167,17 @@ def _running_container(
     *,
     status: str = "running",
     missing_workdirs: set[str] | None = None,
+    execution_identity: ContainerExecutionIdentity | None = None,
 ) -> tuple[RunningContainer, _DockerApi, _Container]:
     api = _DockerApi(scenarios=scenarios, missing_workdirs=missing_workdirs or set())
     container = _Container(api=api, status=status)
     running = RunningContainer(
         container=container,
-        container_spec=ContainerSpec(name="container-name", image_tag="image-tag"),
+        container_spec=ContainerSpec(
+            name="container-name",
+            image_tag="image-tag",
+            execution_identity=execution_identity,
+        ),
     )
     return running, api, container
 
@@ -182,13 +208,15 @@ class _Container:
         self.client = _DockerClient(api)
         self.status = status
         self.kill_commands: list[list[str]] = []
+        self.kill_users: list[str | None] = []
 
     def reload(self) -> None:
         return None
 
-    def exec_run(self, command: list[str]) -> _ExecRunResult:
+    def exec_run(self, command: list[str], *, user: str | None = None) -> _ExecRunResult:
         if len(command) == 3 and command[0] == "kill" and command[1] in {"-TERM", "-KILL"}:
             self.kill_commands.append(command)
+            self.kill_users.append(user)
             self.client.api.signal(command[1], command[2])
             return _ExecRunResult(exit_code=0, output=b"")
         return _ExecRunResult(exit_code=127, output=b"unknown command")
@@ -215,6 +243,7 @@ class _DockerApi:
         stdout: bool,
         stderr: bool,
         workdir: str | None,
+        user: str | None = None,
     ) -> dict[str, str]:
         self.create_calls.append(
             {
@@ -223,6 +252,7 @@ class _DockerApi:
                 "stdout": stdout,
                 "stderr": stderr,
                 "workdir": workdir,
+                **({"user": user} if user is not None else {}),
             }
         )
         if workdir in self._missing_workdirs:

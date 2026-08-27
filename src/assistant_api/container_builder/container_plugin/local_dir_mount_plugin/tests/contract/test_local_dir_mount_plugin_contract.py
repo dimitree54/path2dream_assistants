@@ -7,7 +7,7 @@ import pytest
 from assistant_api.container_builder import ContainerBuilderService
 from assistant_api.container_builder._errors import ConfigurationError
 from assistant_api.container_builder.container_plugin.local_dir_mount_plugin import LocalDirMountPluginService
-from assistant_api.models import ContainerRuntimeContext, VolumeMount
+from assistant_api.models import ContainerExecutionIdentity, ContainerRuntimeContext, VolumeMount
 
 
 def test_local_dir_mount_plugin_adds_bind_mount_and_metadata(tmp_path: Path) -> None:
@@ -67,6 +67,21 @@ def test_local_dir_mount_plugin_rejects_workspace_subdir_name_with_container_pat
             workspace_subdir_name="notes",
             container_path=PurePosixPath("/mnt/project"),
         )
+
+
+def test_writable_mount_rejects_incompatible_execution_identity(tmp_path: Path) -> None:
+    incompatible_uid = tmp_path.stat().st_uid + 1
+    identity = ContainerExecutionIdentity(
+        uid=incompatible_uid,
+        gid=tmp_path.stat().st_gid,
+        umask=0o022,
+    )
+
+    with pytest.raises(ConfigurationError, match="ownership"):
+        ContainerBuilderService(
+            plugins=[LocalDirMountPluginService(tmp_path)],
+            execution_identity=identity,
+        )._prepare_specs()
 
 
 def test_local_dir_mount_post_start_checks_mount_health(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ import pytest
 
 from assistant_api.container_builder import (
     ContainerBuilderService,
+    ContainerCommandTimeoutError,
     RunningContainerCommandRunnerService,
 )
 from assistant_api.container_builder.container_plugin.command_monitor_plugin import (
@@ -28,6 +29,13 @@ from assistant_api.container_builder.container_plugin.opencode_server_plugin imp
     OpenCodeServerPluginService,
 )
 from command_monitor_contract_helpers import unused_port
+from assistant_api.models import (
+    ContainerExecutionIdentity,
+    ContainerRuntimeContext,
+    ContainerSpec,
+    ContainerStartupTask,
+    ImageSpec,
+)
 
 
 TOKEN_ENV_VAR = "OPENAI_API_KEY"
@@ -36,6 +44,121 @@ MISSING_BINARY = "notes-assistant-missing-binary-probe"
 ANSWER_MARKER = "COMMAND_MONITOR_PROBE_DONE"
 PLUGIN_FILE = "/root/.config/opencode/plugins/notes-assistant-command-monitor.js"
 LOG_FILE = "/tmp/notes-assistant/command-monitor/failed-commands.jsonl"
+
+
+class _IdentityProbePlugin:
+    name = "identity-probe"
+
+    def configure_image(self, _image: ImageSpec) -> None:
+        _image.apk_packages.append("nodejs")
+
+    def configure_container(self, container: ContainerSpec) -> None:
+        container.env["XDG_CONFIG_HOME"] = "/workspace/.config"
+        container.startup_tasks.append(
+            ContainerStartupTask(
+                name="identity-startup-write",
+                command=[
+                    "/bin/sh",
+                    "-lc",
+                    "mkdir /workspace/startup-dir && printf startup > /workspace/startup.txt",
+                ],
+            )
+        )
+        container.command = [
+            "/bin/sh",
+            "-lc",
+            "printf main > /workspace/main.txt; exec sleep infinity",
+        ]
+
+    def post_start(self, _runtime: ContainerRuntimeContext) -> None:
+        return None
+
+
+@pytest.mark.live_container
+def test_live_container_non_root_identity_covers_all_writers(tmp_path: Path) -> None:
+    uid = os.getuid()
+    gid = os.getgid()
+    if uid == 0 or gid == 0:
+        pytest.skip("live non-root identity test requires a non-root host identity")
+    identity = ContainerExecutionIdentity(uid=uid, gid=gid, umask=0o022)
+    suffix = f"{os.getpid()}-{uuid4().hex[:8]}"
+    image_tag = f"notes-assistant-execution-identity-{suffix}:test"
+    workspace = tmp_path / "workspace"
+    monitor = tmp_path / "command-monitor"
+    workspace.mkdir()
+    monitor.mkdir()
+    builder = ContainerBuilderService(
+        plugins=[
+            LocalDirMountPluginService(workspace),
+            _IdentityProbePlugin(),
+            CommandMonitorPluginService(log_host_dir=monitor),
+        ],
+        container_name=f"notes-assistant-execution-identity-{suffix}",
+        image_tag=image_tag,
+        execution_identity=identity,
+    )
+
+    try:
+        running = builder.build_and_run()
+        runner = RunningContainerCommandRunnerService(running)
+        direct = runner.run_command(
+            ["/bin/sh", "-lc", "printf direct > /workspace/direct.txt"],
+            timeout_seconds=10,
+        )
+        monitor_write = runner.run_command(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                (
+                    'import { CommandMonitorPlugin } from '
+                    '"file:///opt/notes-assistant-api/command_monitor_plugin.js"; '
+                    "const plugin = await CommandMonitorPlugin(); "
+                    'await plugin["tool.execute.after"]('
+                    '{tool:"bash",sessionID:"identity",callID:"probe",'
+                    'args:{command:"missing",description:"probe",workdir:"/workspace"}},'
+                    '{metadata:{exit:127},output:"not found"});'
+                ),
+            ],
+            timeout_seconds=10,
+        )
+
+        assert direct.exit_code == 0, direct.output
+        assert monitor_write.exit_code == 0, monitor_write.output
+        with pytest.raises(ContainerCommandTimeoutError):
+            runner.run_command(
+                [
+                    "/bin/sh",
+                    "-lc",
+                    "trap '' TERM; while true; do sleep 1; done",
+                ],
+                timeout_seconds=1,
+            )
+        after_timeout = runner.run_command(
+            ["/bin/sh", "-lc", "printf recovered > /workspace/after-timeout.txt"],
+            timeout_seconds=10,
+        )
+        assert after_timeout.exit_code == 0, after_timeout.output
+        for path in (
+            workspace / "startup.txt",
+            workspace / "main.txt",
+            workspace / "direct.txt",
+            workspace / "after-timeout.txt",
+            monitor / "failed-commands.jsonl",
+        ):
+            _assert_identity_and_mode(path, uid=uid, gid=gid, mode=0o644)
+        _assert_identity_and_mode(
+            workspace / "startup-dir", uid=uid, gid=gid, mode=0o755
+        )
+    finally:
+        _stop_builder_if_started(builder)
+        _remove_image_if_present(image_tag)
+
+
+def _assert_identity_and_mode(path: Path, *, uid: int, gid: int, mode: int) -> None:
+    info = path.stat()
+    assert (info.st_uid, info.st_gid) == (uid, gid)
+    assert info.st_mode & 0o777 == mode
 
 
 @pytest.mark.live_container

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pytest
@@ -17,7 +17,12 @@ from assistant_api.container_builder.container_plugin.opencode_persistence_plugi
 from assistant_api.container_builder.container_plugin.opencode_web_server_plugin import (
     OpenCodeWebServerPluginService,
 )
-from assistant_api.models import ContainerSpec, ImageSpec
+from assistant_api.models import (
+    ContainerExecutionIdentity,
+    ContainerSpec,
+    ImageSpec,
+    VolumeMount,
+)
 
 
 class _MissingContainers:
@@ -84,6 +89,7 @@ def test_init_accepts_plugins_and_container_name() -> None:
         "container_name",
         "image_tag",
         "build_policy",
+        "execution_identity",
     ]
     assert signature.parameters["plugins"].default is inspect.Parameter.empty
     assert signature.parameters["container_name"].default == "notes-assistant-opencode"
@@ -91,6 +97,74 @@ def test_init_accepts_plugins_and_container_name() -> None:
     assert signature.parameters["image_tag"].kind is inspect.Parameter.KEYWORD_ONLY
     assert signature.parameters["build_policy"].default == "always"
     assert signature.parameters["build_policy"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["execution_identity"].default is None
+    assert signature.parameters["execution_identity"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.parametrize(
+    ("uid", "gid", "umask"),
+    [
+        (0, 10001, 0o022),
+        (10001, 0, 0o022),
+        (True, 10001, 0o022),
+        (2**32 - 1, 10001, 0o022),
+        (10001, 10001, 0o1000),
+    ],
+)
+def test_execution_identity_rejects_root_non_numeric_and_invalid_umask(
+    uid: object,
+    gid: object,
+    umask: object,
+) -> None:
+    with pytest.raises(ValueError):
+        ContainerExecutionIdentity(uid=uid, gid=gid, umask=umask)  # type: ignore[arg-type]
+
+
+def test_conflicting_plugin_execution_identity_fails_before_docker_work() -> None:
+    first = ContainerExecutionIdentity(uid=10001, gid=10001, umask=0o022)
+    conflicting = ContainerExecutionIdentity(uid=10002, gid=10002, umask=0o077)
+
+    class _IdentityPlugin:
+        name = "identity"
+
+        def configure_image(self, _image: ImageSpec) -> None:
+            return None
+
+        def configure_container(self, container: ContainerSpec) -> None:
+            container.require_execution_identity(conflicting)
+
+        def post_start(self, _runtime: object) -> None:
+            return None
+
+    with pytest.raises(ConfigurationError, match="execution identity"):
+        ContainerBuilderService(
+            plugins=[_IdentityPlugin()],  # type: ignore[list-item]
+            execution_identity=first,
+        )._prepare_specs()
+
+
+def test_execution_identity_rejects_writable_named_volume_before_docker_work() -> None:
+    class _NamedVolumePlugin:
+        name = "named-volume"
+
+        def configure_image(self, _image: ImageSpec) -> None:
+            return None
+
+        def configure_container(self, container: ContainerSpec) -> None:
+            container.volumes["root-created"] = VolumeMount(
+                source="root-created",
+                target=PurePosixPath("/tmp/data"),
+                type="volume",
+            )
+
+        def post_start(self, _runtime: object) -> None:
+            return None
+
+    with pytest.raises(ConfigurationError, match="named volumes"):
+        ContainerBuilderService(
+            plugins=[_NamedVolumePlugin()],  # type: ignore[list-item]
+            execution_identity=ContainerExecutionIdentity(10001, 10001, 0o022),
+        )._prepare_specs()
 
 
 def test_invalid_build_policy_fails_fast() -> None:
