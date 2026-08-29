@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import os
 import shlex
 import tempfile
 from dataclasses import dataclass
@@ -19,6 +24,7 @@ from ._dockerfile import render_dockerfile
 
 DEFAULT_COMMAND = ["sleep", "infinity"]
 STARTUP_TASK_STATUS_DIR = "/tmp/notes-assistant-startup-tasks"
+IMAGE_LOCK_DIR = Path(tempfile.gettempdir()) / "path2dream-assistant-image-locks"
 
 
 @dataclass(slots=True)
@@ -26,6 +32,20 @@ class BuiltImage:
     tag: str
     image: Any
     image_spec: ImageSpec
+
+
+@contextmanager
+def image_lock(image_tag: str) -> Iterator[None]:
+    IMAGE_LOCK_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_name = hashlib.sha256(image_tag.encode("utf-8")).hexdigest() + ".lock"
+    lock_path = IMAGE_LOCK_DIR / lock_name
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 def build_image(docker_client: Any, image_spec: ImageSpec, image_tag: str) -> BuiltImage:

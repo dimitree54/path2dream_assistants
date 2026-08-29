@@ -23,6 +23,7 @@ from ._plugin_lifecycle import PluginLifecycle
 from ._docker_runtime import (
     build_image,
     ensure_named_volumes,
+    image_lock,
     image_exists,
     run_container,
     startup_task_log_path,
@@ -65,14 +66,16 @@ class ContainerBuilderService:
         lifecycle = PluginLifecycle()
         image_spec, _container_spec = self._prepare_specs(lifecycle)
         lifecycle.validate_finished()
-        self._resolve_image(self._client(), image_spec)
+        with image_lock(self.image_tag):
+            self._resolve_image(self._client(), image_spec)
 
     def build_and_run(self) -> RunningContainer:
         lifecycle = PluginLifecycle()
         image_spec, container_spec = self._prepare_specs(lifecycle)
         lifecycle.validate_finished()
-        self._resolve_image(self._client(), image_spec)
-        return self._run_started_container(container_spec, lifecycle)
+        with image_lock(self.image_tag):
+            self._resolve_image(self._client(), image_spec)
+            return self._run_started_container(container_spec, lifecycle)
 
     def _run_started_container(
         self,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import inspect
 import logging
 from pathlib import Path, PurePosixPath
@@ -250,6 +252,45 @@ def test_build_and_run_builds_before_starting_container(monkeypatch) -> None:
 
     assert running.name == "notes-assistant-opencode"
     assert calls == ["build", "volumes", "run"]
+
+
+def test_build_and_run_holds_image_lock_through_container_start(monkeypatch) -> None:
+    calls: list[object] = []
+
+    @contextmanager
+    def image_lock(image_tag: str) -> Iterator[None]:
+        calls.append(("lock", image_tag))
+        yield
+        calls.append(("unlock", image_tag))
+
+    def build_image(_docker_client: Any, _image_spec: ImageSpec, image_tag: str) -> object:
+        calls.append(("build", image_tag))
+        return object()
+
+    def ensure_named_volumes(_docker_client: Any, _container_spec: ContainerSpec) -> None:
+        calls.append("volumes")
+
+    def run_container(_docker_client: Any, container_spec: ContainerSpec) -> _Container:
+        calls.append(("run", container_spec.image_tag))
+        return _Container()
+
+    monkeypatch.setattr(container_builder_service, "image_lock", image_lock)
+    monkeypatch.setattr(container_builder_service, "build_image", build_image)
+    monkeypatch.setattr(container_builder_service, "ensure_named_volumes", ensure_named_volumes)
+    monkeypatch.setattr(container_builder_service, "run_container", run_container)
+
+    builder = ContainerBuilderService(plugins=[], image_tag="shared:latest")
+    builder._docker_client = _DockerClient()
+
+    builder.build_and_run()
+
+    assert calls == [
+        ("lock", "shared:latest"),
+        ("build", "shared:latest"),
+        "volumes",
+        ("run", "shared:latest"),
+        ("unlock", "shared:latest"),
+    ]
 
 
 def test_build_and_run_builds_when_if_missing_image_is_absent(

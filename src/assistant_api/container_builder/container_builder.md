@@ -81,6 +81,7 @@ class ContainerBuilderService:
 - `build_policy="if_missing"` must reuse an existing local image with the configured `image_tag` and build it only when it is missing.
 - `build_policy="never"` must never build the Docker image. It must reuse an existing local image with the configured `image_tag`, and must fail fast with an explicit error when the image is missing.
 - Image policy decisions must be logged so callers can see when an image was built, reused or rejected.
+- Image resolution and container startup for the same `image_tag` must be serialized across local processes so one concurrent build cannot replace or remove another launch's image before Docker starts its container.
 - Plugins must be applied in caller-provided order.
 - Plugin lifecycle execution must be logged with the current plugin name and lifecycle stage before each plugin hook starts.
 - Invalid plugin combinations must fail fast with an explicit error.

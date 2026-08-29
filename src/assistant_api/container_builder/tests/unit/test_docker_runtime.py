@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-
+from threading import Event, Thread
 from typing import Any
 
 from assistant_api.container_builder._docker_runtime import (
@@ -10,6 +10,7 @@ from assistant_api.container_builder._docker_runtime import (
     docker_ports,
     docker_volumes,
     image_exists,
+    image_lock,
     run_container,
 )
 from assistant_api.container_builder._dockerfile import render_dockerfile
@@ -234,6 +235,36 @@ def test_image_exists_returns_true_for_existing_docker_image() -> None:
 
     assert image_exists(_DockerClient(), "assistant:latest") is True
     assert calls == ["assistant:latest"]
+
+
+def test_image_lock_serializes_same_tag() -> None:
+    first_acquired = Event()
+    release_first = Event()
+    second_acquired = Event()
+
+    def hold_first_lock() -> None:
+        with image_lock("shared:latest"):
+            first_acquired.set()
+            assert release_first.wait(timeout=2)
+
+    def wait_for_same_lock() -> None:
+        assert first_acquired.wait(timeout=2)
+        with image_lock("shared:latest"):
+            second_acquired.set()
+
+    first = Thread(target=hold_first_lock)
+    second = Thread(target=wait_for_same_lock)
+    first.start()
+    second.start()
+    assert first_acquired.wait(timeout=2)
+    assert not second_acquired.wait(timeout=0.1)
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_acquired.is_set()
 
 
 def test_image_exists_returns_false_for_missing_docker_image() -> None:
